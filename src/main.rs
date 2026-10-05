@@ -14,9 +14,8 @@ fn main() {
         }
         if command.starts_with("echo") {
             println!("{}", &command[5..]);
+            println!("$")
         }
         println!("{}: command not found", command.trim());
     }
-    println!("$ ");
-    io::stdout().flush().unwrap();
 }
