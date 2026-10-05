@@ -11,7 +11,7 @@ fn main() {
         io::stdin().read_line(&mut command).unwrap();
         println!("{}: command not found", command.trim());
         if command == "exit"{
-            break
+            break;
         }
     }
 }
