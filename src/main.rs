@@ -21,10 +21,10 @@ fn main() {
             if name == "type" || name == "exit" || name == "echo" {
                 println!("{} is a shell builtin", name);
             }else {
-                match which::which("{}",name) {
-                    Ok(path) => println!("{} is {}",name,path.display()),
-                    Err(_) => println!("{}: not found", name),
-                }
+                // match which::which("{}",name) {
+                //     Ok(path) => println!("{} is {}",name,path.display()),
+                //     Err(_) => println!("{}: not found", name),
+                // }
                 
                
             }
