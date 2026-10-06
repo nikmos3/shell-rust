@@ -22,7 +22,7 @@ fn main() {
                 println!("{} is a shell builtin", name);
             }else {
                 match which::which("{}",name) {
-                    Ok(path) => println!("{} is {}"name,path.display()),
+                    Ok(path) => println!("{} is {}",name,path.display()),
                     Err(_) => println!("{}: not found", name),
                 }
                 
