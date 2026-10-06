@@ -21,7 +21,7 @@ fn main() {
             if name == "type" || name == "exit" || name == "echo" {
                 println!("{} is a shell builtin", name);
             }else {
-                println!("{}: command not found", name);
+                println!("{}: not found", name);
             }
 
         } else {
