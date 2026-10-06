@@ -1,5 +1,6 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::path::Path;
 
 fn main() {
     // TODO: Uncomment the code below to pass the first stage
@@ -21,7 +22,12 @@ fn main() {
             if name == "type" || name == "exit" || name == "echo" {
                 println!("{} is a shell builtin", name);
             }else {
-                println!("{}: not found", name);
+                match which::which("{}",name) {
+                    Ok(path) => println!("{} is {}"name,path.display()),
+                    Err(_) => println!("{}: not found", name),
+                }
+                
+               
             }
 
         } else {
