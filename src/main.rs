@@ -17,10 +17,11 @@ fn main() {
             println!("{}", &command[5..]);
 
         } else if command.starts_with("type") {
-            if &command[5..] == "type" || "exit" || "echo" {
-                println!("{} is a shell builtin", &command[5..]);
+            let name = &command[5..];
+            if name == "type" || name == "exit" || name == "echo" {
+                println!("{} is a shell builtin", name);
             }else {
-                println!("{}: command not found",&command[5..]);
+                println!("{}: command not found", name);
             }
 
         } else {
