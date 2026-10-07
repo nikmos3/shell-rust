@@ -1,5 +1,6 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::process::Command;
 
 fn main() {
     // TODO: Uncomment the code below to pass the first stage
@@ -30,7 +31,16 @@ fn main() {
             }
 
         } else {
-        println!("{}: command not found", command.trim());
+            let mut parts = command.split_whitespace();
+            if let Some(program) = parts.next() {
+                match Command::new(program).args(parts).status() {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        println!("{}: command not found", program);
+                    }
+                    Err(error) => eprintln!("{}: {}", program, error),
+                }
+            }
         }
     }
 }
