@@ -3,6 +3,38 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::{env};
 
+fn parse_arguments(input: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quotes = false;
+    let mut token_started = false;
+
+    for character in input.chars() {
+        match character {
+            '\'' => {
+                in_single_quotes = !in_single_quotes;
+                token_started = true;
+            }
+            character if character.is_whitespace() && !in_single_quotes => {
+                if token_started {
+                    arguments.push(std::mem::take(&mut current));
+                    token_started = false;
+                }
+            }
+            _ => {
+                current.push(character);
+                token_started = true;
+            }
+        }
+    }
+
+    if token_started {
+        arguments.push(current);
+    }
+
+    arguments
+}
+
 fn main() {
     // TODO: Uncomment the code below to pass the first stage
     loop {
@@ -19,12 +51,7 @@ fn main() {
             println!();
 
         } else if let Some(text) = command.strip_prefix("echo ") {
-            let text = text.trim();
-            if text.starts_with('\'') && text.ends_with('\'') {
-                println!("{}", &text[1..text.len() - 1]);
-            } else {
-                println!("{}", text.split_whitespace().collect::<Vec<_>>().join(" "));
-            }
+            println!("{}", parse_arguments(text).join(" "));
 
         } else if command.starts_with("type") {
             let name = &command[5..];
@@ -57,9 +84,9 @@ fn main() {
         } else if command == "pwd" {
             println!("{}", env::current_dir().unwrap().display())
         } else {
-            let mut parts = command.split_whitespace();
-            if let Some(program) = parts.next() {
-                match Command::new(program).args(parts).status() {
+            let parts = parse_arguments(&command);
+            if let Some(program) = parts.first() {
+                match Command::new(program).args(&parts[1..]).status() {
                     Ok(_) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         println!("{}: command not found", program);
