@@ -30,6 +30,8 @@ fn main() {
                
             }
 
+        } else if command == "pwd" {
+            println!('{}', env::current_dir().unwrap().display())
         } else {
             let mut parts = command.split_whitespace();
             if let Some(program) = parts.next() {
