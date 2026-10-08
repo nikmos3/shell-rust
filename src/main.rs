@@ -20,7 +20,7 @@ fn main() {
 
         } else if command.starts_with("type") {
             let name = &command[5..];
-            if name == "type" || name == "exit" || name == "echo" {
+            if name == "type" || name == "exit" || name == "echo" || name == "pwd" {
                 println!("{} is a shell builtin", name);
             }else {
                 match which::which(name) {
