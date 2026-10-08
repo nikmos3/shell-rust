@@ -34,8 +34,14 @@ fn main() {
         } else if let Some(path) = command.strip_prefix("cd ") {
             let path = path.trim();
             if path == "~" {
-                let Some(home) = home::home_dir();
-                env::set_current_dir(&home);
+                match env::var("HOME") {
+                    Ok(home) => {
+                        if env::set_current_dir(&home).is_err() {
+                            println!("cd: {}: No such file or directory", home);
+                        }
+                    }
+                    Err(_) => println!("cd: HOME not set"),
+                }
 
             } else if env::set_current_dir(path).is_err() {
                 println!("cd: {}: No such file or directory", path);
