@@ -15,8 +15,16 @@ fn main() {
         command = command.trim().to_string();
         if command == "exit"{
             break;
-        } else if command.starts_with("echo") {
-            println!("{}", &command[5..]);
+        } else if command == "echo" {
+            println!();
+
+        } else if let Some(text) = command.strip_prefix("echo ") {
+            let text = text.trim();
+            if text.starts_with('\'') && text.ends_with('\'') {
+                println!("{}", &text[1..text.len() - 1]);
+            } else {
+                println!("{}", text);
+            }
 
         } else if command.starts_with("type") {
             let name = &command[5..];
