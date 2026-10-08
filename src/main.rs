@@ -33,7 +33,10 @@ fn main() {
 
         } else if let Some(path) = command.strip_prefix("cd ") {
             let path = path.trim();
-            if env::set_current_dir(path).is_err() {
+            if path == "~" {
+                env::set_current_dir("/home/user");
+
+            } else if env::set_current_dir(path).is_err() {
                 println!("cd: {}: No such file or directory", path);
             }
         } else if command == "pwd" {
