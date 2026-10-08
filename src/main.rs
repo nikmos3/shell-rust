@@ -34,7 +34,7 @@ fn main() {
         } else if let Some(path) = command.strip_prefix("cd ") {
             let path = path.trim();
             if path == "~" {
-                let Some(home) = home::home_dir()
+                let Some(home) = home::home_dir();
                 env::set_current_dir(&home);
 
             } else if env::set_current_dir(path).is_err() {
