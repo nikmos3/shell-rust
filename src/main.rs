@@ -23,7 +23,7 @@ fn main() {
             if text.starts_with('\'') && text.ends_with('\'') {
                 println!("{}", &text[1..text.len() - 1]);
             } else {
-                println!("{}", text);
+                println!("{}", text.split_whitespace().collect::<Vec<_>>().join(" "));
             }
 
         } else if command.starts_with("type") {
