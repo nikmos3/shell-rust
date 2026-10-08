@@ -20,7 +20,7 @@ fn main() {
 
         } else if command.starts_with("type") {
             let name = &command[5..];
-            if name == "type" || name == "exit" || name == "echo" || name == "pwd" {
+            if name == "type" || name == "exit" || name == "echo" || name == "pwd" || name == "cd" {
                 println!("{} is a shell builtin", name);
             }else {
                 match which::which(name) {
@@ -31,6 +31,11 @@ fn main() {
                
             }
 
+        } else if let Some(path) = command.strip_prefix("cd ") {
+            let path = path.trim();
+            if env::set_current_dir(path).is_err() {
+                println!("cd: {}: No such file or directory", path);
+            }
         } else if command == "pwd" {
             println!("{}", env::current_dir().unwrap().display())
         } else {
