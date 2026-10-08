@@ -7,15 +7,20 @@ fn parse_arguments(input: &str) -> Vec<String> {
     let mut arguments = Vec::new();
     let mut current = String::new();
     let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
     let mut token_started = false;
 
     for character in input.chars() {
         match character {
-            '\'' => {
+            '\'' if !in_double_quotes => {
                 in_single_quotes = !in_single_quotes;
                 token_started = true;
             }
-            character if character.is_whitespace() && !in_single_quotes => {
+            '"' if !in_single_quotes => {
+                in_double_quotes = !in_double_quotes;
+                token_started = true;
+            }
+            character if character.is_whitespace() && !in_single_quotes && !in_double_quotes => {
                 if token_started {
                     arguments.push(std::mem::take(&mut current));
                     token_started = false;
