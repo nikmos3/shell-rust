@@ -14,8 +14,8 @@ fn parse_arguments(input: &str) -> Vec<String> {
     let mut characters = input.chars().peekable();
     while let Some(character) = characters.next() {
         if !in_single_quotes && !in_double_quotes && character == '>' {
-            if current == "1" && token_started {
-                arguments.push("1>".to_string());
+            if (current == "1" || current == "2") && token_started {
+                arguments.push(format!("{current}>"));
                 current.clear();
             } else {
                 if token_started {
@@ -98,22 +98,28 @@ fn main() {
         }
 
         let mut output = None;
-        if let Some(operator) = parts
+        let mut error_output = None;
+        while let Some(operator) = parts
             .iter()
-            .position(|part| part == ">" || part == "1>")
+            .position(|part| part == ">" || part == "1>" || part == "2>")
         {
             if operator + 1 >= parts.len() {
                 eprintln!("shell: redirection requires a file");
-                continue;
+                break;
             }
             match File::create(&parts[operator + 1]) {
+                Ok(file) if parts[operator] == "2>" => error_output = Some(file),
                 Ok(file) => output = Some(file),
                 Err(error) => {
                     eprintln!("{}: {}", parts[operator + 1], error);
-                    continue;
+                    break;
                 }
             }
             parts.drain(operator..=operator + 1);
+        }
+
+        if parts.iter().any(|part| part == ">" || part == "1>" || part == "2>") {
+            continue;
         }
 
         let Some(program) = parts.first() else {
@@ -171,6 +177,9 @@ fn main() {
                 child.args(&parts[1..]);
                 if let Some(file) = output.take() {
                     child.stdout(Stdio::from(file));
+                }
+                if let Some(file) = error_output.take() {
+                    child.stderr(Stdio::from(file));
                 }
                 match child.status() {
                     Ok(_) => continue,
