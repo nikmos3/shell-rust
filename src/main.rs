@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::{env};
 
 fn parse_arguments(input: &str) -> Vec<String> {
@@ -14,14 +14,18 @@ fn parse_arguments(input: &str) -> Vec<String> {
     let mut characters = input.chars().peekable();
     while let Some(character) = characters.next() {
         if !in_single_quotes && !in_double_quotes && character == '>' {
+            let append = characters.peek() == Some(&'>');
+            if append {
+                characters.next();
+            }
             if (current == "1" || current == "2") && token_started {
-                arguments.push(format!("{current}>"));
+                arguments.push(format!("{current}{}", if append { ">>" } else { ">" }));
                 current.clear();
             } else {
                 if token_started {
                     arguments.push(std::mem::take(&mut current));
                 }
-                arguments.push(">".to_string());
+                arguments.push(if append { ">>" } else { ">" }.to_string());
             }
             token_started = false;
             continue;
@@ -101,14 +105,23 @@ fn main() {
         let mut error_output = None;
         while let Some(operator) = parts
             .iter()
-            .position(|part| part == ">" || part == "1>" || part == "2>")
+            .position(|part| [">", "1>", "2>", ">>", "1>>", "2>>"].contains(&part.as_str()))
         {
             if operator + 1 >= parts.len() {
                 eprintln!("shell: redirection requires a file");
                 break;
             }
-            match File::create(&parts[operator + 1]) {
+            let file = if parts[operator].ends_with(">>") {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&parts[operator + 1])
+            } else {
+                File::create(&parts[operator + 1])
+            };
+            match file {
                 Ok(file) if parts[operator] == "2>" => error_output = Some(file),
+                Ok(file) if parts[operator] == "2>>" => error_output = Some(file),
                 Ok(file) => output = Some(file),
                 Err(error) => {
                     eprintln!("{}: {}", parts[operator + 1], error);
@@ -118,7 +131,10 @@ fn main() {
             parts.drain(operator..=operator + 1);
         }
 
-        if parts.iter().any(|part| part == ">" || part == "1>" || part == "2>") {
+        if parts
+            .iter()
+            .any(|part| [">", "1>", "2>", ">>", "1>>", "2>>"].contains(&part.as_str()))
+        {
             continue;
         }
 
