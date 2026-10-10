@@ -22,6 +22,16 @@ fn parse_arguments(input: &str) -> Vec<String> {
                     token_started = true;
                 }
             }
+            '\\' if in_double_quotes => {
+                if matches!(characters.peek(), Some('"') | Some('\\')) {
+                    if let Some(escaped) = characters.next() {
+                        current.push(escaped);
+                    }
+                } else {
+                    current.push(character);
+                }
+                token_started = true;
+            }
             '\'' if !in_double_quotes => {
                 in_single_quotes = !in_single_quotes;
                 token_started = true;
