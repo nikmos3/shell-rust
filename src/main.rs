@@ -10,8 +10,18 @@ fn parse_arguments(input: &str) -> Vec<String> {
     let mut in_double_quotes = false;
     let mut token_started = false;
 
-    for character in input.chars() {
+    let mut characters = input.chars().peekable();
+    while let Some(character) = characters.next() {
         match character {
+            '\\' if !in_single_quotes && !in_double_quotes => {
+                if let Some(escaped) = characters.next() {
+                    current.push(escaped);
+                    token_started = true;
+                } else {
+                    current.push(character);
+                    token_started = true;
+                }
+            }
             '\'' if !in_double_quotes => {
                 in_single_quotes = !in_single_quotes;
                 token_started = true;
@@ -49,8 +59,8 @@ fn main() {
         let mut command = String::new();
         io::stdin().read_line(&mut command).unwrap();
 
-        command = command.trim().to_string();
-        if command == "exit"{
+        command = command.trim_end_matches(['\n', '\r']).to_string();
+        if command.trim() == "exit" {
             break;
         } else if command == "echo" {
             println!();
