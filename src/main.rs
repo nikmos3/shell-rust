@@ -158,7 +158,11 @@ fn main() {
                     path.clone()
                 };
                 if let Err(error) = env::set_current_dir(&destination) {
-                    eprintln!("cd: {destination}: {error}");
+                    if error.kind() == io::ErrorKind::NotFound {
+                        eprintln!("cd: {destination}: No such file or directory");
+                    } else {
+                        eprintln!("cd: {destination}: {error}");
+                    }
                 }
                 continue;
             }
