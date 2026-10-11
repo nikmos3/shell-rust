@@ -3,7 +3,7 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use rustyline::{Context, Editor, Helper};
+use rustyline::{CompletionType, Config, Context, Editor, Helper};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -160,13 +160,18 @@ fn write_output(output: &mut Option<File>, text: &str) -> io::Result<()> {
 }
 
 fn main() {
-    let mut editor = match Editor::<ShellHelper, rustyline::history::DefaultHistory>::new() {
-        Ok(editor) => editor,
-        Err(error) => {
-            eprintln!("shell: failed to initialize input editor: {error}");
-            return;
-        }
-    };
+    let config = Config::builder()
+        .completion_type(CompletionType::List)
+        .completion_show_all_if_ambiguous(false)
+        .build();
+    let mut editor =
+        match Editor::<ShellHelper, rustyline::history::DefaultHistory>::with_config(config) {
+            Ok(editor) => editor,
+            Err(error) => {
+                eprintln!("shell: failed to initialize input editor: {error}");
+                return;
+            }
+        };
     editor.set_helper(Some(ShellHelper));
 
     loop {
