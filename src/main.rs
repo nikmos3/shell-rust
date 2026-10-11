@@ -1,8 +1,51 @@
 #[allow(unused_imports)]
+use rustyline::completion::{Completer, Pair};
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{Context, Editor, Helper};
+use std::env;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
-use std::fs::{File, OpenOptions};
-use std::{env};
+
+struct ShellHelper;
+
+impl Completer for ShellHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _context: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        let line = &line[..pos];
+        let start = line.rfind(char::is_whitespace).map_or(0, |index| index + 1);
+        if !line[..start].trim().is_empty() {
+            return Ok((start, Vec::new()));
+        }
+
+        let partial = &line[start..];
+        let candidates = ["echo", "exit"]
+            .into_iter()
+            .filter(|candidate| candidate.starts_with(partial))
+            .map(|candidate| Pair {
+                display: candidate.to_string(),
+                replacement: format!("{candidate} "),
+            })
+            .collect();
+        Ok((start, candidates))
+    }
+}
+
+impl Hinter for ShellHelper {
+    type Hint = String;
+}
+
+impl Highlighter for ShellHelper {}
+impl Validator for ShellHelper {}
+impl Helper for ShellHelper {}
 
 fn parse_arguments(input: &str) -> Vec<String> {
     let mut arguments = Vec::new();
@@ -87,15 +130,26 @@ fn write_output(output: &mut Option<File>, text: &str) -> io::Result<()> {
 }
 
 fn main() {
-    // TODO: Uncomment the code below to pass the first stage
+    let mut editor = match Editor::<ShellHelper, rustyline::history::DefaultHistory>::new() {
+        Ok(editor) => editor,
+        Err(error) => {
+            eprintln!("shell: failed to initialize input editor: {error}");
+            return;
+        }
+    };
+    editor.set_helper(Some(ShellHelper));
+
     loop {
-        print!("$ ");
-        io::stdout().flush().unwrap();
-
-        let mut command = String::new();
-        io::stdin().read_line(&mut command).unwrap();
-
-        command = command.trim_end_matches(['\n', '\r']).to_string();
+        let command = match editor.readline("$ ") {
+            Ok(command) => command,
+            Err(rustyline::error::ReadlineError::Interrupted)
+            | Err(rustyline::error::ReadlineError::Eof) => break,
+            Err(error) => {
+                eprintln!("shell: failed to read command: {error}");
+                break;
+            }
+        };
+        let _ = editor.add_history_entry(command.as_str());
         let mut parts = parse_arguments(&command);
         if parts.first().is_some_and(|part| part == "exit") {
             break;
