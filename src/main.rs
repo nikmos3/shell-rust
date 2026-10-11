@@ -5,8 +5,9 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 
 struct ShellHelper;
@@ -27,11 +28,40 @@ impl Completer for ShellHelper {
         }
 
         let partial = &line[start..];
-        let candidates = ["echo", "exit"]
+        let mut candidates = ["echo", "exit"]
             .into_iter()
             .filter(|candidate| candidate.starts_with(partial))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+
+        if !partial.is_empty() {
+            if let Some(path) = env::var_os("PATH") {
+                for directory in env::split_paths(&path) {
+                    let Ok(entries) = fs::read_dir(directory) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                            continue;
+                        };
+                        if name.starts_with(partial)
+                            && entry.metadata().is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                            })
+                        {
+                            candidates.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        candidates.sort();
+        candidates.dedup();
+        let candidates = candidates
+            .into_iter()
             .map(|candidate| Pair {
-                display: candidate.to_string(),
+                display: candidate.clone(),
                 replacement: format!("{candidate} "),
             })
             .collect();
