@@ -31,7 +31,7 @@ impl Completer for ShellHelper {
                 ["echo", "exit"]
                     .into_iter()
                     .filter(|candidate| candidate.starts_with(partial))
-                    .map(str::to_owned),
+                    .map(|candidate| (candidate.to_owned(), false)),
             );
 
             if !partial.is_empty() {
@@ -49,7 +49,7 @@ impl Completer for ShellHelper {
                                     metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
                                 })
                             {
-                                candidates.push(name);
+                                candidates.push((name, false));
                             }
                         }
                     }
@@ -71,24 +71,27 @@ impl Completer for ShellHelper {
                     let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                         continue;
                     };
-                    if name.starts_with(prefix)
-                        && entry.metadata().is_ok_and(|metadata| metadata.is_file())
-                    {
-                        candidates.push(format!("{path_prefix}{name}"));
+                    if name.starts_with(prefix) {
+                        if let Ok(metadata) = entry.metadata() {
+                            if metadata.is_file() || metadata.is_dir() {
+                                candidates
+                                    .push((format!("{path_prefix}{name}"), metadata.is_dir()));
+                            }
+                        }
                     }
                 }
             }
         }
 
-        candidates.sort();
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
         candidates.dedup();
         let is_unique = candidates.len() == 1;
         let candidates = candidates
             .into_iter()
-            .map(|candidate| Pair {
+            .map(|(candidate, is_directory)| Pair {
                 display: candidate.clone(),
                 replacement: if is_unique {
-                    format!("{candidate} ")
+                    format!("{candidate}{}", if is_directory { "/" } else { " " })
                 } else {
                     candidate
                 },
