@@ -55,7 +55,7 @@ impl Completer for ShellHelper {
                     }
                 }
             }
-        } else if !partial.is_empty() {
+        } else {
             let (directory, prefix, path_prefix) =
                 partial
                     .rsplit_once('/')
