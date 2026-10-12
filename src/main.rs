@@ -1,5 +1,6 @@
 #[allow(unused_imports)]
 use rustyline::completion::{Completer, Pair};
+use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
@@ -195,6 +196,7 @@ fn main() {
     let config = Config::builder()
         .completion_type(CompletionType::List)
         .completion_show_all_if_ambiguous(false)
+        .bell_style(BellStyle::Audible)
         .build();
     let mut editor =
         match Editor::<ShellHelper, rustyline::history::DefaultHistory>::with_config(config) {
