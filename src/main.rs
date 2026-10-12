@@ -56,15 +56,25 @@ impl Completer for ShellHelper {
                 }
             }
         } else if !partial.is_empty() {
-            if let Ok(entries) = fs::read_dir(".") {
+            let (directory, prefix, path_prefix) =
+                partial
+                    .rsplit_once('/')
+                    .map_or((".", partial, ""), |(directory, prefix)| {
+                        (
+                            if directory.is_empty() { "/" } else { directory },
+                            prefix,
+                            &partial[..partial.len() - prefix.len()],
+                        )
+                    });
+            if let Ok(entries) = fs::read_dir(directory) {
                 for entry in entries.flatten() {
                     let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                         continue;
                     };
-                    if name.starts_with(partial)
+                    if name.starts_with(prefix)
                         && entry.metadata().is_ok_and(|metadata| metadata.is_file())
                     {
-                        candidates.push(name);
+                        candidates.push(format!("{path_prefix}{name}"));
                     }
                 }
             }
