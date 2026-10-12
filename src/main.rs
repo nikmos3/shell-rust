@@ -90,7 +90,7 @@ impl Completer for ShellHelper {
         let candidates = candidates
             .into_iter()
             .map(|(candidate, is_directory)| Pair {
-                display: candidate.clone(),
+                display: format!("{candidate}{}", if is_directory { "/" } else { "" }),
                 replacement: if is_unique {
                     format!("{candidate}{}", if is_directory { "/" } else { " " })
                 } else {
