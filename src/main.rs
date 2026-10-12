@@ -23,34 +23,48 @@ impl Completer for ShellHelper {
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let line = &line[..pos];
         let start = line.rfind(char::is_whitespace).map_or(0, |index| index + 1);
-        if !line[..start].trim().is_empty() {
-            return Ok((start, Vec::new()));
-        }
-
         let partial = &line[start..];
-        let mut candidates = ["echo", "exit"]
-            .into_iter()
-            .filter(|candidate| candidate.starts_with(partial))
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
 
-        if !partial.is_empty() {
-            if let Some(path) = env::var_os("PATH") {
-                for directory in env::split_paths(&path) {
-                    let Ok(entries) = fs::read_dir(directory) else {
-                        continue;
-                    };
-                    for entry in entries.flatten() {
-                        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+        if line[..start].trim().is_empty() {
+            candidates.extend(
+                ["echo", "exit"]
+                    .into_iter()
+                    .filter(|candidate| candidate.starts_with(partial))
+                    .map(str::to_owned),
+            );
+
+            if !partial.is_empty() {
+                if let Some(path) = env::var_os("PATH") {
+                    for directory in env::split_paths(&path) {
+                        let Ok(entries) = fs::read_dir(directory) else {
                             continue;
                         };
-                        if name.starts_with(partial)
-                            && entry.metadata().is_ok_and(|metadata| {
-                                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-                            })
-                        {
-                            candidates.push(name);
+                        for entry in entries.flatten() {
+                            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                                continue;
+                            };
+                            if name.starts_with(partial)
+                                && entry.metadata().is_ok_and(|metadata| {
+                                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                                })
+                            {
+                                candidates.push(name);
+                            }
                         }
+                    }
+                }
+            }
+        } else if !partial.is_empty() {
+            if let Ok(entries) = fs::read_dir(".") {
+                for entry in entries.flatten() {
+                    let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                        continue;
+                    };
+                    if name.starts_with(partial)
+                        && entry.metadata().is_ok_and(|metadata| metadata.is_file())
+                    {
+                        candidates.push(name);
                     }
                 }
             }
@@ -58,11 +72,16 @@ impl Completer for ShellHelper {
 
         candidates.sort();
         candidates.dedup();
+        let is_unique = candidates.len() == 1;
         let candidates = candidates
             .into_iter()
             .map(|candidate| Pair {
                 display: candidate.clone(),
-                replacement: format!("{candidate} "),
+                replacement: if is_unique {
+                    format!("{candidate} ")
+                } else {
+                    candidate
+                },
             })
             .collect();
         Ok((start, candidates))
