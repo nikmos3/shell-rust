@@ -346,9 +346,18 @@ fn run_builtin(
         "pwd" => Some(run_pwd(output)),
         "type" => Some(run_type(parts, output)),
         "cd" => Some(run_cd(parts)),
-        "complete" => Some(BuiltinOutcome::Continue),
+        "complete" => Some(run_complete(parts)),
         _ => None,
     }
+}
+
+fn run_complete(parts: &[String]) -> BuiltinOutcome {
+    if parts.get(1).is_some_and(|flag| flag == "-p") {
+        if let Some(name) = parts.get(2) {
+            eprintln!("complete: {name}: no completion specification");
+        }
+    }
+    BuiltinOutcome::Continue
 }
 
 fn run_pwd(output: &mut Option<File>) -> BuiltinOutcome {
