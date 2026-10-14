@@ -10,7 +10,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 // ─── Tab-Completion ─────────────────────────────────────────────────────────
@@ -336,6 +336,13 @@ struct Redirection {
     stderr: Option<File>,
 }
 
+struct BackgroundJob {
+    number: usize,
+    _pid: u32,
+    command: String,
+    _process: Child,
+}
+
 /// Extracts redirection operators and opens the target files,
 /// removing the consumed tokens from `parts`. Returns `None` if a
 /// redirection is malformed (missing file, I/O error).
@@ -407,6 +414,7 @@ fn run_builtin(
     parts: &[String],
     output: &mut Option<File>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
+    jobs: &[BackgroundJob],
 ) -> Option<BuiltinOutcome> {
     match program {
         "echo" => Some(BuiltinOutcome::IoResult(write_output(
@@ -417,9 +425,19 @@ fn run_builtin(
         "type" => Some(run_type(parts, output)),
         "cd" => Some(run_cd(parts)),
         "complete" => Some(run_complete(parts, output, completions)),
-        "jobs" => Some(BuiltinOutcome::Continue),
+        "jobs" => Some(run_jobs(jobs, output)),
         _ => None,
     }
+}
+
+fn run_jobs(jobs: &[BackgroundJob], output: &mut Option<File>) -> BuiltinOutcome {
+    for job in jobs {
+        let line = format!("[{}]+  {:<24}{}", job.number, "Running", job.command);
+        if let Err(error) = write_output(output, &line) {
+            return BuiltinOutcome::IoResult(Err(error));
+        }
+    }
+    BuiltinOutcome::Continue
 }
 
 fn run_complete(
@@ -532,9 +550,12 @@ fn run_external(
     parts: &[String],
     redirection: Redirection,
     background_job_number: Option<usize>,
-) -> Option<u32> {
+) -> Option<Child> {
     let mut child = Command::new(program);
     child.args(&parts[1..]);
+    if background_job_number.is_some() {
+        child.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
     if let Some(file) = redirection.stdout {
         child.stdout(Stdio::from(file));
     }
@@ -551,7 +572,7 @@ fn run_external(
                 {
                     eprintln!("shell: failed to report background job: {error}");
                 }
-                Some(pid)
+                Some(child)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 eprintln!("{program}: command not found");
@@ -596,6 +617,7 @@ fn main() {
     }));
 
     let mut next_job_number = 1;
+    let mut jobs = Vec::new();
     loop {
         let input = match editor.readline("$ ") {
             Ok(input) => input,
@@ -636,8 +658,13 @@ fn main() {
             continue;
         };
 
-        if let Some(outcome) = run_builtin(&program, &parts, &mut redirection.stdout, &completions)
-        {
+        if let Some(outcome) = run_builtin(
+            &program,
+            &parts,
+            &mut redirection.stdout,
+            &completions,
+            &jobs,
+        ) {
             match outcome {
                 BuiltinOutcome::Continue => continue,
                 BuiltinOutcome::IoResult(result) => {
@@ -648,7 +675,14 @@ fn main() {
             }
         } else {
             let job_number = is_background.then_some(next_job_number);
-            if run_external(&program, &parts, redirection, job_number).is_some() {
+            if let Some(process) = run_external(&program, &parts, redirection, job_number) {
+                let pid = process.id();
+                jobs.push(BackgroundJob {
+                    number: next_job_number,
+                    _pid: pid,
+                    command: input.trim().to_string(),
+                    _process: process,
+                });
                 next_job_number += 1;
             }
         }
