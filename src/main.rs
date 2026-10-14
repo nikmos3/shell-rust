@@ -431,33 +431,17 @@ fn run_builtin(
 }
 
 fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> BuiltinOutcome {
-    if let Err(error) = reap_completed_jobs(jobs, output) {
+    if let Err(error) = reap_completed_jobs(jobs, output, true) {
         return BuiltinOutcome::IoResult(Err(error));
-    }
-
-    let job_count = jobs.len();
-    let mut lines = Vec::with_capacity(jobs.len());
-    for (index, job) in jobs.iter().enumerate() {
-        let marker = match job_count - index {
-            1 => '+',
-            2 => '-',
-            _ => ' ',
-        };
-        let line = format!(
-            "[{}]{}  {:<24}{} &",
-            job.number, marker, "Running", job.command
-        );
-        lines.push(line);
-    }
-    for line in lines {
-        if let Err(error) = write_output(output, &line) {
-            return BuiltinOutcome::IoResult(Err(error));
-        }
     }
     BuiltinOutcome::Continue
 }
 
-fn reap_completed_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> io::Result<()> {
+fn reap_completed_jobs(
+    jobs: &mut Vec<BackgroundJob>,
+    output: &mut Option<File>,
+    include_running: bool,
+) -> io::Result<()> {
     let job_count = jobs.len();
     let mut completed = Vec::new();
     let mut lines = Vec::new();
@@ -482,6 +466,16 @@ fn reap_completed_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>)
                 job.number, marker, "Done", job.command
             ));
             completed.push(job.number);
+        } else if include_running {
+            let marker = match job_count - index {
+                1 => '+',
+                2 => '-',
+                _ => ' ',
+            };
+            lines.push(format!(
+                "[{}]{}  {:<24}{} &",
+                job.number, marker, "Running", job.command
+            ));
         }
     }
 
@@ -677,7 +671,7 @@ fn main() {
     let mut jobs = Vec::new();
     loop {
         let mut output = None;
-        if let Err(error) = reap_completed_jobs(&mut jobs, &mut output) {
+        if let Err(error) = reap_completed_jobs(&mut jobs, &mut output, false) {
             eprintln!("jobs: failed to report completed jobs: {error}");
         }
 
