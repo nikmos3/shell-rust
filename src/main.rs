@@ -414,7 +414,7 @@ fn run_builtin(
     parts: &[String],
     output: &mut Option<File>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
-    jobs: &[BackgroundJob],
+    jobs: &mut Vec<BackgroundJob>,
 ) -> Option<BuiltinOutcome> {
     match program {
         "echo" => Some(BuiltinOutcome::IoResult(write_output(
@@ -430,21 +430,44 @@ fn run_builtin(
     }
 }
 
-fn run_jobs(jobs: &[BackgroundJob], output: &mut Option<File>) -> BuiltinOutcome {
-    for (index, job) in jobs.iter().enumerate() {
-        let marker = match jobs.len() - index {
+fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> BuiltinOutcome {
+    let job_count = jobs.len();
+    let mut completed = Vec::with_capacity(jobs.len());
+    let mut lines = Vec::with_capacity(jobs.len());
+    for (index, job) in jobs.iter_mut().enumerate() {
+        let done = match job._process.try_wait() {
+            Ok(Some(status)) => status.code().is_some(),
+            Ok(None) => false,
+            Err(error) => {
+                eprintln!("jobs: failed to check process {}: {error}", job._pid);
+                false
+            }
+        };
+        let marker = match job_count - index {
             1 => '+',
             2 => '-',
             _ => ' ',
         };
-        let line = format!(
-            "[{}]{}  {:<24}{}",
-            job.number, marker, "Running", job.command
-        );
+        let (status, command) = if done {
+            completed.push(job.number);
+            ("Done", job.command.as_str())
+        } else {
+            ("Running", job.command.as_str())
+        };
+        let command = if done {
+            command.to_string()
+        } else {
+            format!("{command} &")
+        };
+        let line = format!("[{}]{}  {:<24}{}", job.number, marker, status, command);
+        lines.push(line);
+    }
+    for line in lines {
         if let Err(error) = write_output(output, &line) {
             return BuiltinOutcome::IoResult(Err(error));
         }
     }
+    jobs.retain(|job| !completed.contains(&job.number));
     BuiltinOutcome::Continue
 }
 
@@ -671,7 +694,7 @@ fn main() {
             &parts,
             &mut redirection.stdout,
             &completions,
-            &jobs,
+            &mut jobs,
         ) {
             match outcome {
                 BuiltinOutcome::Continue => continue,
@@ -688,7 +711,7 @@ fn main() {
                 jobs.push(BackgroundJob {
                     number: next_job_number,
                     _pid: pid,
-                    command: input.trim().to_string(),
+                    command: input.trim().trim_end_matches('&').trim_end().to_string(),
                     _process: process,
                 });
                 next_job_number += 1;
