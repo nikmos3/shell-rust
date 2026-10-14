@@ -5,6 +5,7 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, Context, Editor, Helper};
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -337,6 +338,7 @@ fn run_builtin(
     program: &str,
     parts: &[String],
     output: &mut Option<File>,
+    completions: &mut HashMap<String, String>,
 ) -> Option<BuiltinOutcome> {
     match program {
         "echo" => Some(BuiltinOutcome::IoResult(write_output(
@@ -346,16 +348,34 @@ fn run_builtin(
         "pwd" => Some(run_pwd(output)),
         "type" => Some(run_type(parts, output)),
         "cd" => Some(run_cd(parts)),
-        "complete" => Some(run_complete(parts)),
+        "complete" => Some(run_complete(parts, output, completions)),
         _ => None,
     }
 }
 
-fn run_complete(parts: &[String]) -> BuiltinOutcome {
-    if parts.get(1).is_some_and(|flag| flag == "-p") {
-        if let Some(name) = parts.get(2) {
-            eprintln!("complete: {name}: no completion specification");
+fn run_complete(
+    parts: &[String],
+    output: &mut Option<File>,
+    completions: &mut HashMap<String, String>,
+) -> BuiltinOutcome {
+    match parts.get(1).map(String::as_str) {
+        Some("-C") => {
+            if let (Some(path), Some(name)) = (parts.get(2), parts.get(3)) {
+                completions.insert(name.clone(), path.clone());
+            }
         }
+        Some("-p") => {
+            if let Some(name) = parts.get(2) {
+                if let Some(path) = completions.get(name) {
+                    return BuiltinOutcome::IoResult(write_output(
+                        output,
+                        &format!("complete -C '{path}' {name}"),
+                    ));
+                }
+                eprintln!("complete: {name}: no completion specification");
+            }
+        }
+        _ => {}
     }
     BuiltinOutcome::Continue
 }
@@ -433,6 +453,7 @@ fn run_external(program: &str, parts: &[String], redirection: Redirection) {
 // ─── Main Loop ──────────────────────────────────────────────────────────────
 
 fn main() {
+    let mut completions = HashMap::new();
     let config = Config::builder()
         .completion_type(CompletionType::List)
         .completion_show_all_if_ambiguous(false)
@@ -484,7 +505,9 @@ fn main() {
             continue;
         };
 
-        if let Some(outcome) = run_builtin(&program, &parts, &mut redirection.stdout) {
+        if let Some(outcome) =
+            run_builtin(&program, &parts, &mut redirection.stdout, &mut completions)
+        {
             match outcome {
                 BuiltinOutcome::Continue => continue,
                 BuiltinOutcome::IoResult(result) => {
