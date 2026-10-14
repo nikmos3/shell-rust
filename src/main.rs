@@ -105,6 +105,26 @@ impl Completer for ShellHelper {
 
         candidates.sort_by(|left, right| left.name.cmp(&right.name));
         candidates.dedup();
+        if candidates.len() > 1 {
+            let mut common_prefix = candidates[0].name.clone();
+            for candidate in candidates.iter().skip(1) {
+                common_prefix = common_prefix
+                    .chars()
+                    .zip(candidate.name.chars())
+                    .take_while(|(left, right)| left == right)
+                    .map(|(character, _)| character)
+                    .collect();
+            }
+            if common_prefix.starts_with(partial) && common_prefix.len() > partial.len() {
+                return Ok((
+                    start,
+                    vec![Pair {
+                        display: common_prefix.clone(),
+                        replacement: common_prefix,
+                    }],
+                ));
+            }
+        }
         let is_unique = candidates.len() == 1;
         let candidates = candidates
             .into_iter()
@@ -406,6 +426,18 @@ fn run_complete(
                     }
                     Err(error) => {
                         eprintln!("complete: failed to register completion: {error}");
+                    }
+                }
+            }
+        }
+        Some("-r") => {
+            if let Some(name) = parts.get(2) {
+                match completions.lock() {
+                    Ok(mut completions) => {
+                        completions.remove(name);
+                    }
+                    Err(error) => {
+                        eprintln!("complete: failed to remove completion: {error}");
                     }
                 }
             }
