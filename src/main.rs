@@ -220,6 +220,15 @@ fn parse_arguments(input: &str) -> Vec<String> {
 
     let mut characters = input.chars().peekable();
     while let Some(character) = characters.next() {
+        if !in_single_quotes && !in_double_quotes && character == '&' {
+            if token_started {
+                arguments.push(std::mem::take(&mut current));
+                token_started = false;
+            }
+            arguments.push("&".to_string());
+            continue;
+        }
+
         if !in_single_quotes && !in_double_quotes && character == '>' {
             handle_redirection_token(
                 &mut characters,
@@ -518,7 +527,12 @@ fn run_cd(parts: &[String]) -> BuiltinOutcome {
 
 // ─── External Commands ──────────────────────────────────────────────────────
 
-fn run_external(program: &str, parts: &[String], redirection: Redirection) {
+fn run_external(
+    program: &str,
+    parts: &[String],
+    redirection: Redirection,
+    background_job_number: Option<usize>,
+) -> Option<u32> {
     let mut child = Command::new(program);
     child.args(&parts[1..]);
     if let Some(file) = redirection.stdout {
@@ -527,12 +541,36 @@ fn run_external(program: &str, parts: &[String], redirection: Redirection) {
     if let Some(file) = redirection.stderr {
         child.stderr(Stdio::from(file));
     }
-    match child.status() {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("{program}: command not found");
+    if let Some(job_number) = background_job_number {
+        match child.spawn() {
+            Ok(child) => {
+                let pid = child.id();
+                let mut stdout = io::stdout().lock();
+                if let Err(error) =
+                    writeln!(stdout, "[{job_number}] {pid}").and_then(|()| stdout.flush())
+                {
+                    eprintln!("shell: failed to report background job: {error}");
+                }
+                Some(pid)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                eprintln!("{program}: command not found");
+                None
+            }
+            Err(error) => {
+                eprintln!("{program}: {error}");
+                None
+            }
         }
-        Err(error) => eprintln!("{program}: {error}"),
+    } else {
+        match child.status() {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                eprintln!("{program}: command not found");
+            }
+            Err(error) => eprintln!("{program}: {error}"),
+        }
+        None
     }
 }
 
@@ -557,6 +595,7 @@ fn main() {
         completion_scripts: Arc::clone(&completions),
     }));
 
+    let mut next_job_number = 1;
     loop {
         let input = match editor.readline("$ ") {
             Ok(input) => input,
@@ -570,6 +609,10 @@ fn main() {
         let _ = editor.add_history_entry(input.as_str());
 
         let mut parts = parse_arguments(&input);
+        let is_background = parts.last().is_some_and(|part| part == "&");
+        if is_background {
+            parts.pop();
+        }
 
         if parts.first().is_some_and(|part| part == "exit") {
             break;
@@ -604,7 +647,10 @@ fn main() {
                 }
             }
         } else {
-            run_external(&program, &parts, redirection);
+            let job_number = is_background.then_some(next_job_number);
+            if run_external(&program, &parts, redirection, job_number).is_some() {
+                next_job_number += 1;
+            }
         }
     }
 }
