@@ -64,7 +64,7 @@ impl Completer for ShellHelper {
         let partial = &line[start..];
         let words_before_partial = line[..start].split_whitespace();
         let command = words_before_partial.clone().next();
-        let previous_word = words_before_partial.skip(1).last().unwrap_or("");
+        let previous_word = words_before_partial.last().unwrap_or("");
         let registered_script = command
             .filter(|_| line.chars().any(char::is_whitespace))
             .and_then(|command| match self.completion_scripts.lock() {
