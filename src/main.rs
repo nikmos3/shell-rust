@@ -667,7 +667,6 @@ fn main() {
         completion_scripts: Arc::clone(&completions),
     }));
 
-    let mut next_job_number = 1;
     let mut jobs = Vec::new();
     loop {
         let mut output = None;
@@ -730,16 +729,19 @@ fn main() {
                 }
             }
         } else {
-            let job_number = is_background.then_some(next_job_number);
-            if let Some(process) = run_external(&program, &parts, redirection, job_number) {
+            let job_number =
+                is_background.then(|| jobs.iter().map(|job| job.number).max().unwrap_or(0) + 1);
+            if let (Some(job_number), Some(process)) = (
+                job_number,
+                run_external(&program, &parts, redirection, job_number),
+            ) {
                 let pid = process.id();
                 jobs.push(BackgroundJob {
-                    number: next_job_number,
+                    number: job_number,
                     _pid: pid,
                     command: input.trim().trim_end_matches('&').trim_end().to_string(),
                     _process: process,
                 });
-                next_job_number += 1;
             }
         }
     }
