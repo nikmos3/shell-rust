@@ -380,7 +380,7 @@ fn write_output(output: &mut Option<File>, text: &str) -> io::Result<()> {
 
 // ─── Builtin Commands ───────────────────────────────────────────────────────
 
-const BUILTINS: &[&str] = &["type", "exit", "echo", "pwd", "cd", "complete"];
+const BUILTINS: &[&str] = &["type", "exit", "echo", "pwd", "cd", "complete", "jobs"];
 
 /// Runs a builtin command. Returns `Ok(true)` when the shell should
 /// `continue` to the next iteration (i.e. skip the `result` error check),
@@ -408,6 +408,7 @@ fn run_builtin(
         "type" => Some(run_type(parts, output)),
         "cd" => Some(run_cd(parts)),
         "complete" => Some(run_complete(parts, output, completions)),
+        "jobs" => Some(BuiltinOutcome::Continue),
         _ => None,
     }
 }
