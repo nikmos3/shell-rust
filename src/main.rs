@@ -11,10 +11,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 // ─── Tab-Completion ─────────────────────────────────────────────────────────
 
-struct ShellHelper;
+struct ShellHelper {
+    completion_scripts: Arc<Mutex<HashMap<String, String>>>,
+}
 
 #[derive(PartialEq, Eq)]
 struct CompletionCandidate {
@@ -58,7 +61,32 @@ impl Completer for ShellHelper {
         let line = &line[..pos];
         let start = line.rfind(char::is_whitespace).map_or(0, |index| index + 1);
         let partial = &line[start..];
-        let mut candidates = if line[..start].trim().is_empty() {
+        let registered_script = line
+            .split_whitespace()
+            .next()
+            .filter(|_| line.chars().any(char::is_whitespace))
+            .and_then(|command| match self.completion_scripts.lock() {
+                Ok(scripts) => scripts.get(command).cloned(),
+                Err(error) => {
+                    eprintln!("complete: failed to access registrations: {error}");
+                    None
+                }
+            });
+        let registered_candidates =
+            registered_script.map(|script| match Command::new(&script).output() {
+                Ok(output) => String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|name| !name.is_empty())
+                    .map(|name| CompletionCandidate::new(name.to_owned(), false))
+                    .collect(),
+                Err(error) => {
+                    eprintln!("complete: failed to run {script}: {error}");
+                    Vec::new()
+                }
+            });
+        let mut candidates = if let Some(candidates) = registered_candidates {
+            candidates
+        } else if line[..start].trim().is_empty() {
             command_candidates(partial)
         } else {
             path_candidates(partial)
@@ -338,7 +366,7 @@ fn run_builtin(
     program: &str,
     parts: &[String],
     output: &mut Option<File>,
-    completions: &mut HashMap<String, String>,
+    completions: &Arc<Mutex<HashMap<String, String>>>,
 ) -> Option<BuiltinOutcome> {
     match program {
         "echo" => Some(BuiltinOutcome::IoResult(write_output(
@@ -356,17 +384,31 @@ fn run_builtin(
 fn run_complete(
     parts: &[String],
     output: &mut Option<File>,
-    completions: &mut HashMap<String, String>,
+    completions: &Arc<Mutex<HashMap<String, String>>>,
 ) -> BuiltinOutcome {
     match parts.get(1).map(String::as_str) {
         Some("-C") => {
             if let (Some(path), Some(name)) = (parts.get(2), parts.get(3)) {
-                completions.insert(name.clone(), path.clone());
+                match completions.lock() {
+                    Ok(mut completions) => {
+                        completions.insert(name.clone(), path.clone());
+                    }
+                    Err(error) => {
+                        eprintln!("complete: failed to register completion: {error}");
+                    }
+                }
             }
         }
         Some("-p") => {
             if let Some(name) = parts.get(2) {
-                if let Some(path) = completions.get(name) {
+                let path = match completions.lock() {
+                    Ok(completions) => completions.get(name).cloned(),
+                    Err(error) => {
+                        eprintln!("complete: failed to access registrations: {error}");
+                        return BuiltinOutcome::Continue;
+                    }
+                };
+                if let Some(path) = path {
                     return BuiltinOutcome::IoResult(write_output(
                         output,
                         &format!("complete -C '{path}' {name}"),
@@ -453,7 +495,7 @@ fn run_external(program: &str, parts: &[String], redirection: Redirection) {
 // ─── Main Loop ──────────────────────────────────────────────────────────────
 
 fn main() {
-    let mut completions = HashMap::new();
+    let completions = Arc::new(Mutex::new(HashMap::new()));
     let config = Config::builder()
         .completion_type(CompletionType::List)
         .completion_show_all_if_ambiguous(false)
@@ -467,7 +509,9 @@ fn main() {
                 return;
             }
         };
-    editor.set_helper(Some(ShellHelper));
+    editor.set_helper(Some(ShellHelper {
+        completion_scripts: Arc::clone(&completions),
+    }));
 
     loop {
         let input = match editor.readline("$ ") {
@@ -505,8 +549,7 @@ fn main() {
             continue;
         };
 
-        if let Some(outcome) =
-            run_builtin(&program, &parts, &mut redirection.stdout, &mut completions)
+        if let Some(outcome) = run_builtin(&program, &parts, &mut redirection.stdout, &completions)
         {
             match outcome {
                 BuiltinOutcome::Continue => continue,
