@@ -61,9 +61,10 @@ impl Completer for ShellHelper {
         let line = &line[..pos];
         let start = line.rfind(char::is_whitespace).map_or(0, |index| index + 1);
         let partial = &line[start..];
-        let registered_script = line
-            .split_whitespace()
-            .next()
+        let words_before_partial = line[..start].split_whitespace();
+        let command = words_before_partial.clone().next();
+        let previous_word = words_before_partial.skip(1).last().unwrap_or("");
+        let registered_script = command
             .filter(|_| line.chars().any(char::is_whitespace))
             .and_then(|command| match self.completion_scripts.lock() {
                 Ok(scripts) => scripts.get(command).cloned(),
@@ -72,8 +73,14 @@ impl Completer for ShellHelper {
                     None
                 }
             });
-        let registered_candidates =
-            registered_script.map(|script| match Command::new(&script).output() {
+        let registered_candidates = registered_script.map(|script| {
+            let Some(command) = command else {
+                return Vec::new();
+            };
+            match Command::new(&script)
+                .args([command, partial, previous_word])
+                .output()
+            {
                 Ok(output) => String::from_utf8_lossy(&output.stdout)
                     .lines()
                     .filter(|name| !name.is_empty())
@@ -83,7 +90,8 @@ impl Completer for ShellHelper {
                     eprintln!("complete: failed to run {script}: {error}");
                     Vec::new()
                 }
-            });
+            }
+        });
         let mut candidates = if let Some(candidates) = registered_candidates {
             candidates
         } else if line[..start].trim().is_empty() {
