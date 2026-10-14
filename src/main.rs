@@ -431,9 +431,37 @@ fn run_builtin(
 }
 
 fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> BuiltinOutcome {
+    if let Err(error) = reap_completed_jobs(jobs, output) {
+        return BuiltinOutcome::IoResult(Err(error));
+    }
+
     let job_count = jobs.len();
-    let mut completed = Vec::with_capacity(jobs.len());
     let mut lines = Vec::with_capacity(jobs.len());
+    for (index, job) in jobs.iter().enumerate() {
+        let marker = match job_count - index {
+            1 => '+',
+            2 => '-',
+            _ => ' ',
+        };
+        let line = format!(
+            "[{}]{}  {:<24}{} &",
+            job.number, marker, "Running", job.command
+        );
+        lines.push(line);
+    }
+    for line in lines {
+        if let Err(error) = write_output(output, &line) {
+            return BuiltinOutcome::IoResult(Err(error));
+        }
+    }
+    BuiltinOutcome::Continue
+}
+
+fn reap_completed_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> io::Result<()> {
+    let job_count = jobs.len();
+    let mut completed = Vec::new();
+    let mut lines = Vec::new();
+
     for (index, job) in jobs.iter_mut().enumerate() {
         let done = match job._process.try_wait() {
             Ok(Some(status)) => status.code().is_some(),
@@ -443,32 +471,30 @@ fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> Builtin
                 false
             }
         };
-        let marker = match job_count - index {
-            1 => '+',
-            2 => '-',
-            _ => ' ',
-        };
-        let (status, command) = if done {
+        if done {
+            let marker = match job_count - index {
+                1 => '+',
+                2 => '-',
+                _ => ' ',
+            };
+            lines.push(format!(
+                "[{}]{}  {:<24}{}",
+                job.number, marker, "Done", job.command
+            ));
             completed.push(job.number);
-            ("Done", job.command.as_str())
-        } else {
-            ("Running", job.command.as_str())
-        };
-        let command = if done {
-            command.to_string()
-        } else {
-            format!("{command} &")
-        };
-        let line = format!("[{}]{}  {:<24}{}", job.number, marker, status, command);
-        lines.push(line);
+        }
     }
+
+    let mut write_error = None;
     for line in lines {
         if let Err(error) = write_output(output, &line) {
-            return BuiltinOutcome::IoResult(Err(error));
+            if write_error.is_none() {
+                write_error = Some(error);
+            }
         }
     }
     jobs.retain(|job| !completed.contains(&job.number));
-    BuiltinOutcome::Continue
+    write_error.map_or(Ok(()), Err)
 }
 
 fn run_complete(
@@ -650,6 +676,11 @@ fn main() {
     let mut next_job_number = 1;
     let mut jobs = Vec::new();
     loop {
+        let mut output = None;
+        if let Err(error) = reap_completed_jobs(&mut jobs, &mut output) {
+            eprintln!("jobs: failed to report completed jobs: {error}");
+        }
+
         let input = match editor.readline("$ ") {
             Ok(input) => input,
             Err(rustyline::error::ReadlineError::Interrupted)
