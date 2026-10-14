@@ -58,6 +58,7 @@ impl Completer for ShellHelper {
         pos: usize,
         _context: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        let completion_line = line;
         let line = &line[..pos];
         let start = line.rfind(char::is_whitespace).map_or(0, |index| index + 1);
         let partial = &line[start..];
@@ -79,6 +80,8 @@ impl Completer for ShellHelper {
             };
             match Command::new(&script)
                 .args([command, partial, previous_word])
+                .env("COMP_LINE", completion_line)
+                .env("COMP_POINT", pos.to_string())
                 .output()
             {
                 Ok(output) => String::from_utf8_lossy(&output.stdout)
