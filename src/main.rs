@@ -431,8 +431,16 @@ fn run_builtin(
 }
 
 fn run_jobs(jobs: &[BackgroundJob], output: &mut Option<File>) -> BuiltinOutcome {
-    for job in jobs {
-        let line = format!("[{}]+  {:<24}{}", job.number, "Running", job.command);
+    for (index, job) in jobs.iter().enumerate() {
+        let marker = match jobs.len() - index {
+            1 => '+',
+            2 => '-',
+            _ => ' ',
+        };
+        let line = format!(
+            "[{}]{}  {:<24}{}",
+            job.number, marker, "Running", job.command
+        );
         if let Err(error) = write_output(output, &line) {
             return BuiltinOutcome::IoResult(Err(error));
         }
