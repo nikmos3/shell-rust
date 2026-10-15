@@ -396,9 +396,11 @@ fn extract_redirections(parts: &mut Vec<String>) -> Option<Redirection> {
     Some(Redirection { stdout, stderr })
 }
 
-fn write_output(output: &mut Option<File>, text: &str) -> io::Result<()> {
+type CommandOutput<'a> = Option<Box<dyn Write + 'a>>;
+
+fn write_output(output: &mut CommandOutput<'_>, text: &str) -> io::Result<()> {
     match output {
-        Some(file) => writeln!(file, "{text}"),
+        Some(writer) => writeln!(writer, "{text}"),
         None => writeln!(io::stdout().lock(), "{text}"),
     }
 }
@@ -421,7 +423,7 @@ enum BuiltinOutcome {
 fn run_builtin(
     program: &str,
     parts: &[String],
-    output: &mut Option<File>,
+    output: &mut CommandOutput<'_>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
     jobs: &mut Vec<BackgroundJob>,
 ) -> Option<BuiltinOutcome> {
@@ -439,7 +441,7 @@ fn run_builtin(
     }
 }
 
-fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> BuiltinOutcome {
+fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut CommandOutput<'_>) -> BuiltinOutcome {
     if let Err(error) = reap_completed_jobs(jobs, output, true) {
         return BuiltinOutcome::IoResult(Err(error));
     }
@@ -448,7 +450,7 @@ fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut Option<File>) -> Builtin
 
 fn reap_completed_jobs(
     jobs: &mut Vec<BackgroundJob>,
-    output: &mut Option<File>,
+    output: &mut CommandOutput<'_>,
     include_running: bool,
 ) -> io::Result<()> {
     let job_count = jobs.len();
@@ -502,7 +504,7 @@ fn reap_completed_jobs(
 
 fn run_complete(
     parts: &[String],
-    output: &mut Option<File>,
+    output: &mut CommandOutput<'_>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
 ) -> BuiltinOutcome {
     match parts.get(1).map(String::as_str) {
@@ -553,7 +555,7 @@ fn run_complete(
     BuiltinOutcome::Continue
 }
 
-fn run_pwd(output: &mut Option<File>) -> BuiltinOutcome {
+fn run_pwd(output: &mut CommandOutput<'_>) -> BuiltinOutcome {
     match env::current_dir() {
         Ok(path) => BuiltinOutcome::IoResult(write_output(output, &path.display().to_string())),
         Err(error) => {
@@ -563,7 +565,7 @@ fn run_pwd(output: &mut Option<File>) -> BuiltinOutcome {
     }
 }
 
-fn run_type(parts: &[String], output: &mut Option<File>) -> BuiltinOutcome {
+fn run_type(parts: &[String], output: &mut CommandOutput<'_>) -> BuiltinOutcome {
     let Some(name) = parts.get(1) else {
         return BuiltinOutcome::Continue;
     };
@@ -605,88 +607,145 @@ fn run_cd(parts: &[String]) -> BuiltinOutcome {
 
 // ─── External Commands ──────────────────────────────────────────────────────
 
+fn run_pipeline_builtin(
+    program: &str,
+    parts: &[String],
+    stdout: Option<File>,
+    completions: &Arc<Mutex<HashMap<String, String>>>,
+    jobs: &mut Vec<BackgroundJob>,
+) -> Vec<u8> {
+    let mut captured = Vec::new();
+    let mut output: CommandOutput<'_> = match stdout {
+        Some(file) => Some(Box::new(file)),
+        None => Some(Box::new(&mut captured)),
+    };
+
+    if let Some(BuiltinOutcome::IoResult(Err(error))) =
+        run_builtin(program, parts, &mut output, completions, jobs)
+    {
+        eprintln!("{program}: {error}");
+    }
+    drop(output);
+    captured
+}
+
 fn run_pipeline(
-    left_parts: &[String],
-    left_redirection: Redirection,
-    right_parts: &[String],
-    right_redirection: Redirection,
+    commands: &[Vec<String>],
+    mut redirections: Vec<Redirection>,
+    completions: &Arc<Mutex<HashMap<String, String>>>,
+    jobs: &mut Vec<BackgroundJob>,
 ) {
-    let Some(left_program) = left_parts.first() else {
-        return;
-    };
-    let Some(right_program) = right_parts.first() else {
-        return;
-    };
+    let mut pipeline_input = None;
+    let mut command_index = 0;
 
-    let mut left_command = Command::new(left_program);
-    left_command.args(&left_parts[1..]);
-    if let Some(file) = left_redirection.stdout {
-        left_command.stdout(Stdio::from(file));
-    } else {
-        left_command.stdout(Stdio::piped());
-    }
-    if let Some(file) = left_redirection.stderr {
-        left_command.stderr(Stdio::from(file));
-    }
-
-    let mut left_child = match left_command.spawn() {
-        Ok(child) => child,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("{left_program}: command not found");
-            return;
-        }
-        Err(error) => {
-            eprintln!("{left_program}: {error}");
-            return;
-        }
-    };
-
-    let right_stdin = left_child
-        .stdout
-        .take()
-        .map(Stdio::from)
-        .unwrap_or_else(Stdio::null);
-    let mut right_command = Command::new(right_program);
-    right_command.args(&right_parts[1..]).stdin(right_stdin);
-    if let Some(file) = right_redirection.stdout {
-        right_command.stdout(Stdio::from(file));
-    }
-    if let Some(file) = right_redirection.stderr {
-        right_command.stderr(Stdio::from(file));
-    }
-
-    let mut right_child = match right_command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            if error.kind() == io::ErrorKind::NotFound {
-                eprintln!("{right_program}: command not found");
+    while command_index < commands.len() {
+        let program = &commands[command_index][0];
+        if BUILTINS.contains(&program.as_str()) {
+            let stdout_is_redirected = redirections[command_index].stdout.is_some();
+            let output = run_pipeline_builtin(
+                program,
+                &commands[command_index],
+                redirections[command_index].stdout.take(),
+                completions,
+                jobs,
+            );
+            if command_index + 1 == commands.len() && !stdout_is_redirected {
+                if let Err(error) = io::stdout().lock().write_all(&output) {
+                    eprintln!("{program}: {error}");
+                }
+                pipeline_input = None;
             } else {
-                eprintln!("{right_program}: {error}");
+                pipeline_input = Some(output);
             }
-            if let Err(error) = left_child.kill() {
-                eprintln!("{left_program}: failed to stop pipeline process: {error}");
-            }
-            if let Err(error) = left_child.wait() {
-                eprintln!("{left_program}: failed to wait for process: {error}");
-            }
-            return;
+            command_index += 1;
+            continue;
         }
-    };
 
-    if let Err(error) = right_child.wait() {
-        eprintln!("{right_program}: failed to wait for process: {error}");
-    }
-    match left_child.try_wait() {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            if let Err(error) = left_child.kill() {
-                eprintln!("{left_program}: failed to stop pipeline process: {error}");
+        let segment_start = command_index;
+        while command_index < commands.len()
+            && !BUILTINS.contains(&commands[command_index][0].as_str())
+        {
+            command_index += 1;
+        }
+        let segment_end = command_index;
+        let mut children = Vec::new();
+        let mut initial_input = pipeline_input.take();
+
+        for index in segment_start..segment_end {
+            let mut command = Command::new(&commands[index][0]);
+            command.args(&commands[index][1..]);
+            if index == segment_start {
+                if initial_input.is_some() {
+                    command.stdin(Stdio::piped());
+                }
+            } else if redirections[index - 1].stdout.is_some() {
+                command.stdin(Stdio::null());
+            } else {
+                let previous_stdout = children
+                    .last_mut()
+                    .and_then(|child: &mut Child| child.stdout.take());
+                command.stdin(previous_stdout.map_or_else(Stdio::null, Stdio::from));
+            }
+
+            if let Some(file) = redirections[index].stdout.take() {
+                command.stdout(Stdio::from(file));
+            } else if index + 1 < commands.len() {
+                command.stdout(Stdio::piped());
+            }
+            if let Some(file) = redirections[index].stderr.take() {
+                command.stderr(Stdio::from(file));
+            }
+
+            match command.spawn() {
+                Ok(child) => children.push(child),
+                Err(error) => {
+                    let program = &commands[index][0];
+                    if error.kind() == io::ErrorKind::NotFound {
+                        eprintln!("{program}: command not found");
+                    } else {
+                        eprintln!("{program}: {error}");
+                    }
+                    for child in &mut children {
+                        if let Err(error) = child.kill() {
+                            eprintln!("shell: failed to stop pipeline process: {error}");
+                        }
+                    }
+                    for child in &mut children {
+                        if let Err(error) = child.wait() {
+                            eprintln!("shell: failed to wait for pipeline process: {error}");
+                        }
+                    }
+                    return;
+                }
             }
         }
-        Err(error) => eprintln!("{left_program}: failed to check process: {error}"),
-    }
-    if let Err(error) = left_child.wait() {
-        eprintln!("{left_program}: failed to wait for process: {error}");
+
+        if segment_end < commands.len() {
+            if let Some(child) = children.last_mut() {
+                drop(child.stdout.take());
+            }
+        }
+
+        if let Some(input) = initial_input.take() {
+            if let Some(stdin) = children.first_mut().and_then(|child| child.stdin.take()) {
+                let mut stdin = stdin;
+                if let Err(error) = stdin.write_all(&input) {
+                    eprintln!(
+                        "{}: failed to write pipeline input: {error}",
+                        commands[segment_start][0]
+                    );
+                }
+            }
+        }
+
+        for (index, child) in children.iter_mut().enumerate().rev() {
+            if let Err(error) = child.wait() {
+                eprintln!(
+                    "{}: failed to wait for process: {error}",
+                    commands[segment_start + index][0]
+                );
+            }
+        }
     }
 }
 
@@ -791,29 +850,39 @@ fn main() {
             .filter_map(|(index, part)| (part == "|").then_some(index))
             .collect();
         if !pipe_positions.is_empty() {
-            if pipe_positions.len() != 1
-                || pipe_positions[0] == 0
-                || pipe_positions[0] + 1 == parts.len()
+            let mut commands = Vec::new();
+            let mut redirections = Vec::new();
+            let mut segment_start = 0;
+            let mut valid_pipeline = true;
+
+            for segment_end in pipe_positions
+                .iter()
+                .copied()
+                .chain(std::iter::once(parts.len()))
             {
-                eprintln!("shell: pipeline requires exactly two commands");
-                continue;
+                if segment_start == segment_end {
+                    eprintln!("shell: pipeline requires a command on each side of '|'");
+                    valid_pipeline = false;
+                    break;
+                }
+                let mut command_parts = parts[segment_start..segment_end].to_vec();
+                let Some(redirection) = extract_redirections(&mut command_parts) else {
+                    valid_pipeline = false;
+                    break;
+                };
+                if command_parts.is_empty() {
+                    eprintln!("shell: pipeline command is missing");
+                    valid_pipeline = false;
+                    break;
+                }
+                commands.push(command_parts);
+                redirections.push(redirection);
+                segment_start = segment_end + 1;
             }
 
-            let position = pipe_positions[0];
-            let mut left_parts = parts[..position].to_vec();
-            let mut right_parts = parts[position + 1..].to_vec();
-            let Some(left_redirection) = extract_redirections(&mut left_parts) else {
-                continue;
-            };
-            let Some(right_redirection) = extract_redirections(&mut right_parts) else {
-                continue;
-            };
-            run_pipeline(
-                &left_parts,
-                left_redirection,
-                &right_parts,
-                right_redirection,
-            );
+            if valid_pipeline {
+                run_pipeline(&commands, redirections, &completions, &mut jobs);
+            }
             continue;
         }
 
@@ -839,20 +908,15 @@ fn main() {
             continue;
         };
 
-        if let Some(outcome) = run_builtin(
-            &program,
-            &parts,
-            &mut redirection.stdout,
-            &completions,
-            &mut jobs,
-        ) {
-            match outcome {
-                BuiltinOutcome::Continue => continue,
-                BuiltinOutcome::IoResult(result) => {
-                    if let Err(error) = result {
-                        eprintln!("{program}: {error}");
-                    }
-                }
+        if BUILTINS.contains(&program.as_str()) {
+            let mut output: CommandOutput<'_> = redirection
+                .stdout
+                .take()
+                .map(|file| Box::new(file) as Box<dyn Write>);
+            if let Some(BuiltinOutcome::IoResult(Err(error))) =
+                run_builtin(&program, &parts, &mut output, &completions, &mut jobs)
+            {
+                eprintln!("{program}: {error}");
             }
         } else {
             let job_number =
