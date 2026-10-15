@@ -229,6 +229,15 @@ fn parse_arguments(input: &str) -> Vec<String> {
             continue;
         }
 
+        if !in_single_quotes && !in_double_quotes && character == '|' {
+            if token_started {
+                arguments.push(std::mem::take(&mut current));
+                token_started = false;
+            }
+            arguments.push("|".to_string());
+            continue;
+        }
+
         if !in_single_quotes && !in_double_quotes && character == '>' {
             handle_redirection_token(
                 &mut characters,
@@ -596,6 +605,91 @@ fn run_cd(parts: &[String]) -> BuiltinOutcome {
 
 // ─── External Commands ──────────────────────────────────────────────────────
 
+fn run_pipeline(
+    left_parts: &[String],
+    left_redirection: Redirection,
+    right_parts: &[String],
+    right_redirection: Redirection,
+) {
+    let Some(left_program) = left_parts.first() else {
+        return;
+    };
+    let Some(right_program) = right_parts.first() else {
+        return;
+    };
+
+    let mut left_command = Command::new(left_program);
+    left_command.args(&left_parts[1..]);
+    if let Some(file) = left_redirection.stdout {
+        left_command.stdout(Stdio::from(file));
+    } else {
+        left_command.stdout(Stdio::piped());
+    }
+    if let Some(file) = left_redirection.stderr {
+        left_command.stderr(Stdio::from(file));
+    }
+
+    let mut left_child = match left_command.spawn() {
+        Ok(child) => child,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            eprintln!("{left_program}: command not found");
+            return;
+        }
+        Err(error) => {
+            eprintln!("{left_program}: {error}");
+            return;
+        }
+    };
+
+    let right_stdin = left_child
+        .stdout
+        .take()
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null);
+    let mut right_command = Command::new(right_program);
+    right_command.args(&right_parts[1..]).stdin(right_stdin);
+    if let Some(file) = right_redirection.stdout {
+        right_command.stdout(Stdio::from(file));
+    }
+    if let Some(file) = right_redirection.stderr {
+        right_command.stderr(Stdio::from(file));
+    }
+
+    let mut right_child = match right_command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                eprintln!("{right_program}: command not found");
+            } else {
+                eprintln!("{right_program}: {error}");
+            }
+            if let Err(error) = left_child.kill() {
+                eprintln!("{left_program}: failed to stop pipeline process: {error}");
+            }
+            if let Err(error) = left_child.wait() {
+                eprintln!("{left_program}: failed to wait for process: {error}");
+            }
+            return;
+        }
+    };
+
+    if let Err(error) = right_child.wait() {
+        eprintln!("{right_program}: failed to wait for process: {error}");
+    }
+    match left_child.try_wait() {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            if let Err(error) = left_child.kill() {
+                eprintln!("{left_program}: failed to stop pipeline process: {error}");
+            }
+        }
+        Err(error) => eprintln!("{left_program}: failed to check process: {error}"),
+    }
+    if let Err(error) = left_child.wait() {
+        eprintln!("{left_program}: failed to wait for process: {error}");
+    }
+}
+
 fn run_external(
     program: &str,
     parts: &[String],
@@ -689,6 +783,38 @@ fn main() {
         let is_background = parts.last().is_some_and(|part| part == "&");
         if is_background {
             parts.pop();
+        }
+
+        let pipe_positions: Vec<usize> = parts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| (part == "|").then_some(index))
+            .collect();
+        if !pipe_positions.is_empty() {
+            if pipe_positions.len() != 1
+                || pipe_positions[0] == 0
+                || pipe_positions[0] + 1 == parts.len()
+            {
+                eprintln!("shell: pipeline requires exactly two commands");
+                continue;
+            }
+
+            let position = pipe_positions[0];
+            let mut left_parts = parts[..position].to_vec();
+            let mut right_parts = parts[position + 1..].to_vec();
+            let Some(left_redirection) = extract_redirections(&mut left_parts) else {
+                continue;
+            };
+            let Some(right_redirection) = extract_redirections(&mut right_parts) else {
+                continue;
+            };
+            run_pipeline(
+                &left_parts,
+                left_redirection,
+                &right_parts,
+                right_redirection,
+            );
+            continue;
         }
 
         if parts.first().is_some_and(|part| part == "exit") {

@@ -141,7 +141,7 @@ $ exit
 ## Engineering Roadmap / Future Extensions
 
 - [ ] **I/O Redirection**: Implement file descriptor manipulation for standard streams (`>`, `>>`, `2>`, `<`).
-- [ ] **Pipeline Execution (`|`)**: Support chaining arbitrary child processes using Unix anonymous pipes (`pipe(2)`).
+- [x] **Pipeline Execution (`|`)**: Connect two external commands through an anonymous pipe.
 - [ ] **Signal Handling**: Integrate `signal-hook` / `tokio` for clean `SIGINT` (Ctrl+C) and `SIGTSTP` (Ctrl+Z) interception without killing the parent shell.
 - [ ] **Environment Variable Expansion**: Support `$VAR` substitution directly in the tokenizer.
 - [ ] **Autocompletion & Line Editing**: Integrate `rustyline` for history navigation, reverse search, and tab completion.
