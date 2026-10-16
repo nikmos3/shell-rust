@@ -407,7 +407,9 @@ fn write_output(output: &mut CommandOutput<'_>, text: &str) -> io::Result<()> {
 
 // ─── Builtin Commands ───────────────────────────────────────────────────────
 
-const BUILTINS: &[&str] = &["type", "exit", "echo", "pwd", "cd", "complete", "jobs"];
+const BUILTINS: &[&str] = &[
+    "type", "exit", "echo", "pwd", "cd", "complete", "jobs", "history",
+];
 
 /// Runs a builtin command. Returns `Ok(true)` when the shell should
 /// `continue` to the next iteration (i.e. skip the `result` error check),
@@ -426,6 +428,7 @@ fn run_builtin(
     output: &mut CommandOutput<'_>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
     jobs: &mut Vec<BackgroundJob>,
+    history: &dyn rustyline::history::History,
 ) -> Option<BuiltinOutcome> {
     match program {
         "echo" => Some(BuiltinOutcome::IoResult(write_output(
@@ -437,8 +440,32 @@ fn run_builtin(
         "cd" => Some(run_cd(parts)),
         "complete" => Some(run_complete(parts, output, completions)),
         "jobs" => Some(run_jobs(jobs, output)),
+        "history" => Some(run_history(history, output)),
         _ => None,
     }
+}
+
+fn run_history(
+    history: &dyn rustyline::history::History,
+    output: &mut CommandOutput<'_>,
+) -> BuiltinOutcome {
+    for index in 0..history.len() {
+        match history.get(index, rustyline::history::SearchDirection::Forward) {
+            Ok(Some(entry)) => {
+                if let Err(error) =
+                    write_output(output, &format!("{:>5}  {}", index + 1, entry.entry))
+                {
+                    return BuiltinOutcome::IoResult(Err(error));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("history: {error}");
+                return BuiltinOutcome::Continue;
+            }
+        }
+    }
+    BuiltinOutcome::Continue
 }
 
 fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut CommandOutput<'_>) -> BuiltinOutcome {
@@ -613,6 +640,7 @@ fn run_pipeline_builtin(
     stdout: Option<File>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
     jobs: &mut Vec<BackgroundJob>,
+    history: &dyn rustyline::history::History,
 ) -> Vec<u8> {
     let mut captured = Vec::new();
     let mut output: CommandOutput<'_> = match stdout {
@@ -621,7 +649,7 @@ fn run_pipeline_builtin(
     };
 
     if let Some(BuiltinOutcome::IoResult(Err(error))) =
-        run_builtin(program, parts, &mut output, completions, jobs)
+        run_builtin(program, parts, &mut output, completions, jobs, history)
     {
         eprintln!("{program}: {error}");
     }
@@ -634,6 +662,7 @@ fn run_pipeline(
     mut redirections: Vec<Redirection>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
     jobs: &mut Vec<BackgroundJob>,
+    history: &dyn rustyline::history::History,
 ) {
     let mut pipeline_input = None;
     let mut command_index = 0;
@@ -648,6 +677,7 @@ fn run_pipeline(
                 redirections[command_index].stdout.take(),
                 completions,
                 jobs,
+                history,
             );
             if command_index + 1 == commands.len() && !stdout_is_redirected {
                 if let Err(error) = io::stdout().lock().write_all(&output) {
@@ -881,7 +911,13 @@ fn main() {
             }
 
             if valid_pipeline {
-                run_pipeline(&commands, redirections, &completions, &mut jobs);
+                run_pipeline(
+                    &commands,
+                    redirections,
+                    &completions,
+                    &mut jobs,
+                    editor.history(),
+                );
             }
             continue;
         }
@@ -913,9 +949,14 @@ fn main() {
                 .stdout
                 .take()
                 .map(|file| Box::new(file) as Box<dyn Write>);
-            if let Some(BuiltinOutcome::IoResult(Err(error))) =
-                run_builtin(&program, &parts, &mut output, &completions, &mut jobs)
-            {
+            if let Some(BuiltinOutcome::IoResult(Err(error))) = run_builtin(
+                &program,
+                &parts,
+                &mut output,
+                &completions,
+                &mut jobs,
+                editor.history(),
+            ) {
                 eprintln!("{program}: {error}");
             }
         } else {
