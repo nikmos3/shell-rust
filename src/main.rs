@@ -440,16 +440,29 @@ fn run_builtin(
         "cd" => Some(run_cd(parts)),
         "complete" => Some(run_complete(parts, output, completions)),
         "jobs" => Some(run_jobs(jobs, output)),
-        "history" => Some(run_history(history, output)),
+        "history" => Some(run_history(parts, history, output)),
         _ => None,
     }
 }
 
 fn run_history(
+    parts: &[String],
     history: &dyn rustyline::history::History,
     output: &mut CommandOutput<'_>,
 ) -> BuiltinOutcome {
-    for index in 0..history.len() {
+    let history_len = history.len();
+    let start = match parts.get(1) {
+        Some(limit) => match limit.parse::<usize>() {
+            Ok(limit) => history_len.saturating_sub(limit),
+            Err(error) => {
+                eprintln!("history: {limit}: {error}");
+                return BuiltinOutcome::Continue;
+            }
+        },
+        None => 0,
+    };
+
+    for index in start..history_len {
         match history.get(index, rustyline::history::SearchDirection::Forward) {
             Ok(Some(entry)) => {
                 if let Err(error) =
