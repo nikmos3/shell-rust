@@ -2,8 +2,8 @@
 use rustyline::completion::{Completer, Pair};
 use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
-use rustyline::history::History;
 use rustyline::hint::Hinter;
+use rustyline::history::History;
 use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, Context, Editor, Helper};
 use std::collections::HashMap;
@@ -483,6 +483,19 @@ fn run_history(
     BuiltinOutcome::Continue
 }
 
+fn write_history(history: &dyn rustyline::history::History, path: &Path) -> io::Result<()> {
+    let mut file = File::create(path)?;
+    for index in 0..history.len() {
+        if let Some(entry) = history
+            .get(index, rustyline::history::SearchDirection::Forward)
+            .map_err(io::Error::other)?
+        {
+            writeln!(file, "{}", entry.entry)?;
+        }
+    }
+    Ok(())
+}
+
 fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut CommandOutput<'_>) -> BuiltinOutcome {
     if let Err(error) = reap_completed_jobs(jobs, output, true) {
         return BuiltinOutcome::IoResult(Err(error));
@@ -959,14 +972,29 @@ fn main() {
             continue;
         };
 
-        if program == "history" && parts.get(1).is_some_and(|argument| argument == "-r") {
+        if program == "history"
+            && parts
+                .get(1)
+                .is_some_and(|argument| argument == "-r" || argument == "-w")
+        {
             match parts.as_slice() {
-                [_, _, path] => {
+                [_, option, path] if option == "-r" => {
                     if let Err(error) = editor.history_mut().load(Path::new(path)) {
                         eprintln!("history: {path}: {error}");
                     }
                 }
-                _ => eprintln!("history: -r: expected a history file path"),
+                [_, option, path] if option == "-w" => {
+                    if let Err(error) = write_history(editor.history(), Path::new(path)) {
+                        eprintln!("history: {path}: {error}");
+                    }
+                }
+                [_, option, ..] if option == "-r" => {
+                    eprintln!("history: -r: expected a history file path")
+                }
+                [_, option, ..] if option == "-w" => {
+                    eprintln!("history: -w: expected a history file path")
+                }
+                _ => unreachable!("history option was checked above"),
             }
             continue;
         }
