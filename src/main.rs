@@ -2,6 +2,7 @@
 use rustyline::completion::{Completer, Pair};
 use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
+use rustyline::history::History;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, Context, Editor, Helper};
@@ -10,6 +11,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -956,6 +958,18 @@ fn main() {
         let Some(program) = parts.first().cloned() else {
             continue;
         };
+
+        if program == "history" && parts.get(1).is_some_and(|argument| argument == "-r") {
+            match parts.as_slice() {
+                [_, _, path] => {
+                    if let Err(error) = editor.history_mut().load(Path::new(path)) {
+                        eprintln!("history: {path}: {error}");
+                    }
+                }
+                _ => eprintln!("history: -r: expected a history file path"),
+            }
+            continue;
+        }
 
         if BUILTINS.contains(&program.as_str()) {
             let mut output: CommandOutput<'_> = redirection
