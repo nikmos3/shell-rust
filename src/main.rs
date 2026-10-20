@@ -496,6 +496,14 @@ fn write_history(history: &dyn rustyline::history::History, path: &Path) -> io::
     Ok(())
 }
 
+fn append_history(entries: &[String], path: &Path) -> io::Result<()> {
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    for entry in entries {
+        writeln!(file, "{entry}")?;
+    }
+    Ok(())
+}
+
 fn run_jobs(jobs: &mut Vec<BackgroundJob>, output: &mut CommandOutput<'_>) -> BuiltinOutcome {
     if let Err(error) = reap_completed_jobs(jobs, output, true) {
         return BuiltinOutcome::IoResult(Err(error));
@@ -879,6 +887,7 @@ fn main() {
     }));
 
     let mut jobs = Vec::new();
+    let mut unappended_history = Vec::new();
     loop {
         let mut output = None;
         if let Err(error) = reap_completed_jobs(&mut jobs, &mut output, false) {
@@ -894,7 +903,11 @@ fn main() {
                 break;
             }
         };
-        let _ = editor.add_history_entry(input.as_str());
+        match editor.add_history_entry(input.as_str()) {
+            Ok(true) => unappended_history.push(input.clone()),
+            Ok(false) => {}
+            Err(error) => eprintln!("history: failed to add command: {error}"),
+        }
 
         let mut parts = parse_arguments(&input);
         let is_background = parts.last().is_some_and(|part| part == "&");
@@ -975,7 +988,7 @@ fn main() {
         if program == "history"
             && parts
                 .get(1)
-                .is_some_and(|argument| argument == "-r" || argument == "-w")
+                .is_some_and(|argument| argument == "-r" || argument == "-w" || argument == "-a")
         {
             match parts.as_slice() {
                 [_, option, path] if option == "-r" => {
@@ -986,6 +999,15 @@ fn main() {
                 [_, option, path] if option == "-w" => {
                     if let Err(error) = write_history(editor.history(), Path::new(path)) {
                         eprintln!("history: {path}: {error}");
+                    } else {
+                        unappended_history.clear();
+                    }
+                }
+                [_, option, path] if option == "-a" => {
+                    if let Err(error) = append_history(&unappended_history, Path::new(path)) {
+                        eprintln!("history: {path}: {error}");
+                    } else {
+                        unappended_history.clear();
                     }
                 }
                 [_, option, ..] if option == "-r" => {
@@ -993,6 +1015,9 @@ fn main() {
                 }
                 [_, option, ..] if option == "-w" => {
                     eprintln!("history: -w: expected a history file path")
+                }
+                [_, option, ..] if option == "-a" => {
+                    eprintln!("history: -a: expected a history file path")
                 }
                 _ => unreachable!("history option was checked above"),
             }
