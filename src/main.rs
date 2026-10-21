@@ -886,6 +886,13 @@ fn main() {
         completion_scripts: Arc::clone(&completions),
     }));
 
+    if let Some(history_path) = env::var_os("HISTFILE") {
+        let path = Path::new(&history_path);
+        if let Err(error) = editor.history_mut().load(path) {
+            eprintln!("history: {}: {error}", path.display());
+        }
+    }
+
     let mut jobs = Vec::new();
     let mut unappended_history = Vec::new();
     loop {
