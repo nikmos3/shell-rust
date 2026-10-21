@@ -1063,4 +1063,11 @@ fn main() {
             }
         }
     }
+
+    if let Some(history_path) = env::var_os("HISTFILE") {
+        let path = Path::new(&history_path);
+        if let Err(error) = write_history(editor.history(), path) {
+            eprintln!("history: {}: {error}", path.display());
+        }
+    }
 }
