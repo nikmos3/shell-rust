@@ -1,44 +1,49 @@
 # Rush — POSIX-Compliant Shell in Rust
 
 [![Language](https://img.shields.io/badge/Language-Rust_2024-orange.svg)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/Status-Completed_MVP-brightgreen.svg)]()
+[![Status](https://img.shields.io/badge/Status-Completed-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-POSIX_%2F_Linux_%2F_macOS-lightgrey.svg)]()
 
-A lightweight, POSIX-aligned command-line interpreter (shell) built from scratch in Rust. Features a custom state-machine tokenizer supporting nested quoting, dynamic executable path resolution, process lifecycle management, and native built-in utility commands.
+A high-performance, POSIX-aligned command interpreter and interactive REPL built from scratch in Rust. Features a custom state-machine tokenizer, multi-stage inter-process communication (IPC) pipelines, asynchronous background job supervision, stream redirection, and programmable tab-completion.
 
-Designed and implemented to explore low-level systems programming concepts: lexical analysis, process spawning (`fork`/`exec` semantics), file system interaction, and standard I/O multiplexing in a memory-safe environment without garbage collection overhead.
+Designed to explore low-level systems programming: Unix process isolation (`fork`/`exec` semantics), file descriptor manipulation, IPC stream chaining, and non-blocking process polling in a memory-safe environment without garbage collection overhead.
 
 ---
 
 ## Architecture Overview
 
-The shell follows a classic **REPL (Read-Eval-Print Loop)** architecture structured into modular stages:
+The shell follows a modular **REPL (Read-Eval-Print Loop)** architecture structured into discrete execution stages:
 
 ```mermaid
 flowchart TD
-    A["User Input (stdin)"] --> B["REPL Loop (main)"]
+    A["User Input (stdin)"] --> B["Interactive REPL (Rustyline)"]
     B --> C["Lexical Tokenizer<br/>parse_arguments()"]
-    C -->|Token Stream: Program + Args| D{"Command Dispatcher"}
-    D -->|Builtin Command| E["Internal Builtin Router"]
-    D -->|External Command| F["PATH Resolution (which)"]
+    C --> D{"Pipeline / Operator Check"}
     
-    E --> E1["cd (with ~ / $HOME expansion)"]
-    E --> E2["pwd (env::current_dir)"]
-    E --> E3["echo (quote-stripped string)"]
-    E --> E4["type (symbol reflection)"]
-    E --> E5["exit (graceful termination)"]
+    D -->|"Pipes (|)"| E["Multi-Stage Pipeline Orchestrator"]
+    D -->|"Single Command"| F["Command Dispatcher"]
     
-    F -->|Found| G["Process Spawning<br/>std::process::Command"]
-    F -->|Not Found| H["Command Not Found Error"]
+    E --> E1["Spawn Child Processes & Chain Stdio"]
+    E1 --> E2["Wait & Cascading Cleanup"]
     
-    G --> I["Child Process Execution & Exit Code Capture"]
-    E1 --> J["Prompt Return ($ )"]
-    E2 --> J
-    E3 --> J
-    E4 --> J
-    E5 --> K["Shell Terminated"]
-    H --> J
-    I --> J
+    F -->|"Builtin Command"| G["Internal Builtin Router"]
+    F -->|"External Binary"| H["Process Spawner (std::process::Command)"]
+    
+    G --> G1["cd / pwd / echo / type / exit"]
+    G --> G2["history (-r, -w, -a, $HISTFILE)"]
+    G --> G3["jobs (reap completed via try_wait)"]
+    G --> G4["complete (programmable scripts)"]
+    
+    H -->|"Background (&)"| I["Add to Job Table & Report PID"]
+    H -->|"Foreground"| J["Wait for Status Code"]
+    
+    E2 --> K["Prompt Return ($ )"]
+    G1 --> K
+    G2 --> K
+    G3 --> K
+    G4 --> K
+    I --> K
+    J --> K
 ```
 
 ---
@@ -46,46 +51,44 @@ flowchart TD
 ## Key Technical Features
 
 ### 1. State-Machine Lexical Tokenizer
-- **Quote-Aware Parsing**: Hand-rolled deterministic finite-state scanner (`parse_arguments`) that differentiates between single quotes (`'...'`), double quotes (`"..."`), and unquoted whitespace delimiters.
-- **Literal Preservation**: Properly preserves literal characters, internal whitespace, and empty strings within quotes while stripping surrounding delimiter quotes.
-- **Memory Efficiency**: Utilizes `std::mem::take` to extract token buffers without redundant heap reallocations.
+* **Quote-Aware Parsing:** Deterministic finite-state scanner (`parse_arguments`) distinguishing single quotes (`'...'`), double quotes (`"..."`), and unquoted whitespace.
+* **Escape Handling:** Context-aware backslash resolution preserving literals inside and outside quoted strings.
+* **Zero-Copy Optimizations:** Leverages `std::mem::take` to extract token buffers without redundant heap allocations.
 
-### 2. Builtin Command Dispatcher
-Executes internal commands directly within the shell process to preserve shell state and avoid unnecessary process fork overhead:
-- **`cd`**: Changes working directory via `std::env::set_current_dir`, featuring dynamic tilde (`~`) expansion resolving to `$HOME`.
-- **`pwd`**: Displays the canonical current working directory.
-- **`echo`**: Formats and prints tokenized arguments separated by single spaces.
-- **`type`**: Inspects command names and reflects whether a given symbol is an internal shell builtin or maps to an executable on the filesystem `PATH`.
-- **`exit`**: Gracefully tears down the REPL session with zero exit status.
+### 2. Multi-Stage IPC Pipelines (`|`)
+* **Chained Process Streaming:** Intercepts pipeline tokens and connects the standard output of upstream processes directly to the standard input of downstream processes via anonymous pipes.
+* **Cascading Process Cleanup:** On pipeline errors or non-existent binaries, automatically issues termination signals (`child.kill()`) and reaps child processes to eliminate zombie tasks.
+* **In-Pipeline Builtin Execution:** Seamlessly handles builtins within pipeline chains by capturing in-memory buffers and routing them to the next process.
 
-### 3. External Process Management & PATH Resolution
-- **Subprocess Spawning**: Dispatches external binaries using Rust's `std::process::Command`, executing child processes with inherited stdin/stdout/stderr streams.
-- **PATH Lookup**: Integrates path lookup to dynamically discover binaries across system `$PATH` entries.
-- **Robust Error Handling**: Differentiates between non-existent binaries (`ErrorKind::NotFound`) and execution/permission failures, emitting clean POSIX diagnostics.
+### 3. I/O Stream Redirection
+* Supports full POSIX file descriptor routing for standard output (`>`, `1>`, `>>`, `1>>`) and standard error (`2>`, `2>>`) in both overwrite and append modes.
+* Cleans and sanitizes redirection tokens before dispatching arguments to external commands.
+
+### 4. Asynchronous Job Control & Concurrency (`&`)
+* Spawns detached background processes and tracks them inside a thread-safe job table.
+* Reports sequential job numbers and operating system process IDs (`[job_number] PID`).
+* Implements non-blocking process polling via `try_wait()` before each prompt cycle to reap terminated children and display clean completion notices.
+
+### 5. Interactive REPL & Programmable Autocompletion
+* Line editing, history scrolling, and audio bell styles powered by `Rustyline`.
+* **Smart Completion:** Dynamic path completion for files and directories, executable discovery across `$PATH` (validating `0o111` execution bits), and longest common prefix matching.
+* **Programmable Hooks:** Dynamic completion script registration via the `complete` builtin passing `COMP_LINE` and `COMP_POINT` environment variables.
+* **History Management:** Full support for persistent command logs via `$HISTFILE` and interactive flags (`history -r`, `-w`, `-a`).
 
 ---
 
-## Resume Highlights & Interview Talking Points
+## Architectural & Systems Design Highlights
 
-If discussing this project on a resume or during mid-level software engineering interviews, leverage these key bullets and talking points:
-
-### Resume Bullet Points (STAR Format)
-- **Engineered a POSIX-compliant shell in Rust**, implementing an end-to-end REPL architecture with custom lexical analysis, command dispatch, and external process management.
-- **Built a deterministic state-machine argument parser** supporting nested single/double quote handling and whitespace tokenization, optimizing buffer allocations with `std::mem::take`.
-- **Architected built-in utility routing** (`cd`, `pwd`, `echo`, `type`, `exit`) to manipulate shell process state and integrated binary resolution across `$PATH` with robust error propagation.
-- **Leveraged Rust's strict type system and ownership semantics** to eliminate buffer overflows, dangling pointers, and unhandled I/O failures common in traditional C-based shell implementations.
-
-### Technical Interview Discussion Areas
-- **Why Builtins Need In-Process Execution**: Why commands like `cd` cannot be run as child processes (a child process modifying its current working directory does not affect the parent process environment).
-- **Zero-Allocation Tokenizer Techniques**: Trade-offs between streaming string scanners vs. regex-based tokenizers, and how state-tracking prevents catastrophic backtracking and memory bloat.
-- **System Calls & Process Model**: How `std::process::Command` maps to Unix `fork(2)` and `execve(2)` under the hood, and how process status codes and signals are monitored.
+* **In-Process vs. Subprocess Execution:** Builtins like `cd` and `history` execute directly within the shell process to manipulate parent process environment and state variables, which child sub-processes cannot alter.
+* **Process Lifecycle & Zombie Prevention:** Implements non-blocking `try_wait` cycles during prompt loops to reap asynchronous background tasks and prevent zombie entries in the operating system process table.
+* **Memory Safety & Error Propagation:** Eliminates common C-based shell pitfalls (buffer overflows, off-by-one errors, memory leaks) through Rust's strict ownership model, RAII file descriptor management, and typed `io::Result` propagation.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- **Rust Toolchain**: Rust 1.80+ (2024 edition) and Cargo.
+* **Rust Toolchain:** Rust 1.80+ (2024 edition) and Cargo.
   ```sh
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
@@ -93,8 +96,8 @@ If discussing this project on a resume or during mid-level software engineering 
 ### Build and Run
 ```sh
 # Clone the repository
-git clone https://github.com/<your-username>/rush.git
-cd rush
+git clone https://github.com/nikmos3/shell-rust.git
+cd shell-rust
 
 # Build in release mode
 cargo build --release
@@ -111,37 +114,39 @@ cargo run --release
 $ echo "Hello    world"
 Hello world
 
-$ type cd
-cd is a shell builtin
+$ ls -la | grep "main"
+-rw-r--r--  1 developer  staff  36591 Oct 21 16:30 main.rs
 
-$ type ls
-ls is /bin/ls
+$ echo "Logging output" > output.txt
+$ cat output.txt
+Logging output
 
-$ pwd
-/Users/developer/rush
+$ sleep 5 &
+[1] 49210
 
-$ cd ~
-$ pwd
-/Users/developer
+$ jobs
+[1]+  Running                 sleep 5 &
 
-$ ls -la
-total 64
-drwxr-xr-x  12 developer staff  384 Oct  8 16:00 .
-drwxr-xr-x   6 root      admin  192 Sep 20 10:14 ..
-...
-
-$ non_existent_cmd
-non_existent_cmd: command not found
+$ history 5
+    1  echo "Hello world"
+    2  ls -la | grep "main"
+    3  echo "Logging output" > output.txt
+    4  cat output.txt
+    5  sleep 5 &
 
 $ exit
 ```
 
 ---
 
-## Engineering Roadmap / Future Extensions
+## Project Status & Roadmap
 
-- [ ] **I/O Redirection**: Implement file descriptor manipulation for standard streams (`>`, `>>`, `2>`, `<`).
-- [x] **Pipeline Execution (`|`)**: Connect two external commands through an anonymous pipe.
-- [ ] **Signal Handling**: Integrate `signal-hook` / `tokio` for clean `SIGINT` (Ctrl+C) and `SIGTSTP` (Ctrl+Z) interception without killing the parent shell.
-- [ ] **Environment Variable Expansion**: Support `$VAR` substitution directly in the tokenizer.
-- [ ] **Autocompletion & Line Editing**: Integrate `rustyline` for history navigation, reverse search, and tab completion.
+- [x] State-machine argument tokenization and quote escaping
+- [x] POSIX builtin commands (`cd`, `pwd`, `echo`, `type`, `exit`)
+- [x] Standard I/O and standard error redirection (`>`, `>>`, `2>`, `2>>`)
+- [x] Multi-stage IPC command pipelines (`|`)
+- [x] Asynchronous background process supervision (`&`) and job table
+- [x] Interactive REPL with programmable tab-completion and `$HISTFILE`
+- [x] Process signal handling & graceful termination (`SIGINT` / `EOF` break)
+- [x] Dynamic environment variable and tilde home directory expansion
+
