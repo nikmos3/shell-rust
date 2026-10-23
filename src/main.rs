@@ -410,7 +410,7 @@ fn write_output(output: &mut CommandOutput<'_>, text: &str) -> io::Result<()> {
 // ─── Builtin Commands ───────────────────────────────────────────────────────
 
 const BUILTINS: &[&str] = &[
-    "type", "exit", "echo", "pwd", "cd", "complete", "jobs", "history",
+    "type", "exit", "echo", "pwd", "cd", "complete", "jobs", "history", "declare",
 ];
 
 /// Runs a builtin command. Returns `Ok(true)` when the shell should
