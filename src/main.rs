@@ -452,7 +452,7 @@ fn run_history(
     history: &dyn rustyline::history::History,
     output: &mut CommandOutput<'_>,
 ) -> BuiltinOutcome {
-    let history_len = history.len();
+    let history_len = history.len().saturating_sub(1);
     let start = match parts.get(1) {
         Some(limit) => match limit.parse::<usize>() {
             Ok(limit) => history_len.saturating_sub(limit),
@@ -869,11 +869,17 @@ fn run_external(
 
 fn main() {
     let completions = Arc::new(Mutex::new(HashMap::new()));
-    let config = Config::builder()
-        .completion_type(CompletionType::List)
-        .completion_show_all_if_ambiguous(false)
-        .bell_style(BellStyle::Audible)
-        .build();
+    let config = match Config::builder().history_ignore_dups(false) {
+        Ok(builder) => builder
+            .completion_type(CompletionType::List)
+            .completion_show_all_if_ambiguous(false)
+            .bell_style(BellStyle::Audible)
+            .build(),
+        Err(error) => {
+            eprintln!("shell: failed to configure history: {error}");
+            return;
+        }
+    };
     let mut editor =
         match Editor::<ShellHelper, rustyline::history::DefaultHistory>::with_config(config) {
             Ok(editor) => editor,
