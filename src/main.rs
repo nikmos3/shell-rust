@@ -452,7 +452,7 @@ fn run_history(
     history: &dyn rustyline::history::History,
     output: &mut CommandOutput<'_>,
 ) -> BuiltinOutcome {
-    let history_len = history.len().saturating_sub(1);
+    let history_len = history.len();
     let start = match parts.get(1) {
         Some(limit) => match limit.parse::<usize>() {
             Ok(limit) => history_len.saturating_sub(limit),
