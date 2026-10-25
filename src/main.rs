@@ -443,8 +443,18 @@ fn run_builtin(
         "complete" => Some(run_complete(parts, output, completions)),
         "jobs" => Some(run_jobs(jobs, output)),
         "history" => Some(run_history(parts, history, output)),
+        "declare" => Some(run_declare(parts)),
         _ => None,
     }
+}
+
+fn run_declare(parts: &[String]) -> BuiltinOutcome {
+    if let [_, option, name, ..] = parts
+        && option == "-p"
+    {
+        eprintln!("declare: {name}: not found");
+    }
+    BuiltinOutcome::Continue
 }
 
 fn run_history(
