@@ -429,6 +429,7 @@ fn run_builtin(
     parts: &[String],
     output: &mut CommandOutput<'_>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
+    variables: &mut HashMap<String, String>,
     jobs: &mut Vec<BackgroundJob>,
     history: &dyn rustyline::history::History,
 ) -> Option<BuiltinOutcome> {
@@ -443,18 +444,41 @@ fn run_builtin(
         "complete" => Some(run_complete(parts, output, completions)),
         "jobs" => Some(run_jobs(jobs, output)),
         "history" => Some(run_history(parts, history, output)),
-        "declare" => Some(run_declare(parts)),
+        "declare" => Some(run_declare(parts, output, variables)),
         _ => None,
     }
 }
 
-fn run_declare(parts: &[String]) -> BuiltinOutcome {
-    if let [_, option, name, ..] = parts
-        && option == "-p"
-    {
-        eprintln!("declare: {name}: not found");
+fn run_declare(
+    parts: &[String],
+    output: &mut CommandOutput<'_>,
+    variables: &mut HashMap<String, String>,
+) -> BuiltinOutcome {
+    match parts.get(1).map(String::as_str) {
+        Some("-p") => {
+            let Some(name) = parts.get(2) else {
+                return BuiltinOutcome::Continue;
+            };
+            match variables.get(name) {
+                Some(value) => BuiltinOutcome::IoResult(write_output(
+                    output,
+                    &format!("declare -- {name}=\"{value}\""),
+                )),
+                None => {
+                    eprintln!("declare: {name}: not found");
+                    BuiltinOutcome::Continue
+                }
+            }
+        }
+        _ => {
+            for assignment in parts.iter().skip(1) {
+                if let Some((name, value)) = assignment.split_once('=') {
+                    variables.insert(name.to_owned(), value.to_owned());
+                }
+            }
+            BuiltinOutcome::Continue
+        }
     }
-    BuiltinOutcome::Continue
 }
 
 fn run_history(
@@ -685,6 +709,7 @@ fn run_pipeline_builtin(
     parts: &[String],
     stdout: Option<File>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
+    variables: &mut HashMap<String, String>,
     jobs: &mut Vec<BackgroundJob>,
     history: &dyn rustyline::history::History,
 ) -> Vec<u8> {
@@ -694,9 +719,15 @@ fn run_pipeline_builtin(
         None => Some(Box::new(&mut captured)),
     };
 
-    if let Some(BuiltinOutcome::IoResult(Err(error))) =
-        run_builtin(program, parts, &mut output, completions, jobs, history)
-    {
+    if let Some(BuiltinOutcome::IoResult(Err(error))) = run_builtin(
+        program,
+        parts,
+        &mut output,
+        completions,
+        variables,
+        jobs,
+        history,
+    ) {
         eprintln!("{program}: {error}");
     }
     drop(output);
@@ -707,6 +738,7 @@ fn run_pipeline(
     commands: &[Vec<String>],
     mut redirections: Vec<Redirection>,
     completions: &Arc<Mutex<HashMap<String, String>>>,
+    variables: &mut HashMap<String, String>,
     jobs: &mut Vec<BackgroundJob>,
     history: &dyn rustyline::history::History,
 ) {
@@ -722,6 +754,7 @@ fn run_pipeline(
                 &commands[command_index],
                 redirections[command_index].stdout.take(),
                 completions,
+                variables,
                 jobs,
                 history,
             );
@@ -879,6 +912,7 @@ fn run_external(
 
 fn main() {
     let completions = Arc::new(Mutex::new(HashMap::new()));
+    let mut variables = HashMap::new();
     let config = match Config::builder().history_ignore_dups(false) {
         Ok(builder) => builder
             .completion_type(CompletionType::List)
@@ -979,6 +1013,7 @@ fn main() {
                     &commands,
                     redirections,
                     &completions,
+                    &mut variables,
                     &mut jobs,
                     editor.history(),
                 );
@@ -1057,6 +1092,7 @@ fn main() {
                 &parts,
                 &mut output,
                 &completions,
+                &mut variables,
                 &mut jobs,
                 editor.history(),
             ) {
