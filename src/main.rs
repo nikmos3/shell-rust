@@ -473,12 +473,24 @@ fn run_declare(
         _ => {
             for assignment in parts.iter().skip(1) {
                 if let Some((name, value)) = assignment.split_once('=') {
+                    if !is_valid_shell_identifier(name) {
+                        eprintln!("declare: `{assignment}': not a valid identifier");
+                        continue;
+                    }
                     variables.insert(name.to_owned(), value.to_owned());
                 }
             }
             BuiltinOutcome::Continue
         }
     }
+}
+
+fn is_valid_shell_identifier(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn run_history(
