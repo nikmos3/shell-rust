@@ -213,7 +213,7 @@ impl Helper for ShellHelper {}
 
 // ─── Argument Parsing ───────────────────────────────────────────────────────
 
-fn parse_arguments(input: &str) -> Vec<String> {
+fn parse_arguments(input: &str, variables: &HashMap<String, String>) -> Vec<String> {
     let mut arguments = Vec::new();
     let mut current = String::new();
     let mut in_single_quotes = false;
@@ -257,6 +257,26 @@ fn parse_arguments(input: &str) -> Vec<String> {
             }
             '\\' if in_double_quotes => {
                 handle_backslash_in_double_quotes(&mut characters, &mut current);
+                token_started = true;
+            }
+            '$' if !in_single_quotes => {
+                let mut name = String::new();
+                if matches!(
+                    characters.peek(),
+                    Some(character) if character.is_ascii_alphabetic() || *character == '_'
+                ) {
+                    while matches!(
+                        characters.peek(),
+                        Some(character) if character.is_ascii_alphanumeric() || *character == '_'
+                    ) {
+                        name.push(characters.next().expect("peeked character exists"));
+                    }
+                    if let Some(value) = variables.get(&name) {
+                        current.push_str(value);
+                    }
+                } else {
+                    current.push('$');
+                }
                 token_started = true;
             }
             '\'' if !in_double_quotes => {
@@ -324,12 +344,12 @@ fn handle_backslash_unquoted(
     }
 }
 
-/// Handles `\X` escape sequences inside double quotes (only `\"` and `\\`).
+/// Handles `\X` escape sequences inside double quotes (`\"`, `\\`, and `\$`).
 fn handle_backslash_in_double_quotes(
     characters: &mut std::iter::Peekable<std::str::Chars>,
     current: &mut String,
 ) {
-    if matches!(characters.peek(), Some('"') | Some('\\')) {
+    if matches!(characters.peek(), Some('"') | Some('\\') | Some('$')) {
         if let Some(escaped) = characters.next() {
             current.push(escaped);
         }
@@ -978,7 +998,7 @@ fn main() {
             Err(error) => eprintln!("history: failed to add command: {error}"),
         }
 
-        let mut parts = parse_arguments(&input);
+        let mut parts = parse_arguments(&input, &variables);
         let is_background = parts.last().is_some_and(|part| part == "&");
         if is_background {
             parts.pop();
@@ -1133,5 +1153,44 @@ fn main() {
         if let Err(error) = write_history(editor.history(), path) {
             eprintln!("history: {}: {error}", path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_arguments;
+    use std::collections::HashMap;
+
+    #[test]
+    fn expands_variables_in_words_without_splitting_values() {
+        let variables = HashMap::from([
+            ("First".to_owned(), "value one".to_owned()),
+            ("Second_2".to_owned(), "value2".to_owned()),
+        ]);
+
+        assert_eq!(
+            parse_arguments("echo $First $Second_2 prefix$First", &variables),
+            ["echo", "value one", "value2", "prefixvalue one"]
+        );
+    }
+
+    #[test]
+    fn does_not_expand_single_quoted_or_escaped_variables() {
+        let variables = HashMap::from([("NAME".to_owned(), "value".to_owned())]);
+
+        assert_eq!(
+            parse_arguments(r#"echo '$NAME' "\$NAME" \$NAME "$NAME""#, &variables),
+            ["echo", "$NAME", "$NAME", "$NAME", "value"]
+        );
+    }
+
+    #[test]
+    fn unset_variables_expand_to_empty_and_braced_form_remains_literal() {
+        let variables = HashMap::new();
+
+        assert_eq!(
+            parse_arguments("echo $MISSING ${MISSING}", &variables),
+            ["echo", "", "${MISSING}"]
+        );
     }
 }
